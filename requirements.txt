@@ -1,0 +1,5 @@
+ollama
+PyMuPDF
+tqdm
+streamlit
+pandas 
