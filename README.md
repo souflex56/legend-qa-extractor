@@ -46,8 +46,8 @@ def create_hybrid_blocks(text: str, max_size: int, min_size: int) -> List[str]:
     paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
     # ... 动态合并算法 ...
 ````
-- 支持按比例对 PDF采样 进行快速验证（`EXTRACT_RATIO`），例如`EXTRACT_RATIO`=0.1只处理前 10% 块即可进行小批量测试
-- 
+- 支持按比例对 PDF采样 进行快速验证（`EXTRACT_RATIO`），例如`EXTRACT_RATIO` = 0.1 只处理前 10% PDF文档，可进行小批量测试
+  
 ### 🔍 多模态问答检测 (`block_has_qa`)
 
 - ​**三层识别机制**​：
