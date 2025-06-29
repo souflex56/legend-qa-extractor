@@ -6,6 +6,34 @@
 
 本项目是一个 **全流程自动化中文问答对提取系统**，面向结构化或半结构化 PDF 文档（如段永平访谈、投资随笔等），可自动生成标准化 JSON 格式问答对，直接用于自定义大模型微调（LoRA / SFT）或多领域问答数据构建（金融、访谈、教育等）。系统基于本地大模型（Ollama + Qwen 系列）推理，可在私有环境独立部署，无需云端 API，保障数据安全与隐私。示例项目中，系统从段永平 300 页访谈 PDF 中成功提取出 1,095 个高质量问答对，显著提升数据标注自动化与工程化效率
 
+## ⚙️ 快速上手
+
+#### ✅ 安装依赖
+```bash
+pip install -r requirements.txt
+```
+#### **✅ 配置 PDF 文件**
+- 将你的 PDF 文件（例如 uploaded.pdf）放入项目根目录，或根据需要修改 PDF_FILENAME 配置项
+#### **✅ 启动本地 Ollama 模型**
+```
+ollama serve
+```
+- 确保已安装需要的模型（如 qwen2.5:7b-instruct）
+- 可通过 ollama list 查看和管理本地模型
+
+#### **✅ 运行提取脚本**
+```
+python extract_qa.py
+```
+- 默认输出文件位于：output/output_final_duan-qa.jsonl
+- 每行一个 JSON 格式问答对，示例内容如下：
+```
+{
+"question": "什么是 stop doing list？",
+"answer": "所谓要做对的事情实际上是通过不做不对的事情来实现的。",
+"source_text": "完整原文块..."
+}
+```
 
 ## 技术亮点
 
@@ -109,45 +137,6 @@ def extract_json(text: str) -> List[dict]:
 ---
 
 
-## ⚙️ 快速上手
-
-### 安装依赖
-
-```bash
-pip install -r requirements.txt
-
-示例 requirements.txt 内容（需自行补充）：
-
-tqdm
-PyMuPDF
-ollama
-
-配置 PDF 文件
-
-将你的 PDF 文件（如 uploaded.pdf）放入项目根目录，或修改 PDF_FILENAME。
-
-启动本地 Ollama 模型
-
-ollama serve
-
-并确认已安装需要的模型（如 qwen2.5:7b-instruct）。
-
-运行提取
-
-python extract_qa.py
-
-默认输出文件：output/output_final_duan-qa.jsonl，每行一个 JSON 格式问答对，例如：
-
-{
-  "question": "什么是 stop doing list？",
-  "answer": "所谓要做对的事情实际上是通过不做不对的事情来实现的。",
-  "source_text": "完整原文块..."
-}
-
-
-```
-
-⸻
 ## ⚖️ 当前项目局限性
 
 - 🔎 **依赖本地大模型推理能力与前缀规则**
