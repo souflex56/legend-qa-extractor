@@ -2,7 +2,7 @@
 
 <div align="right">
 
-**Language** | **语言**: [🇺🇸 EN](README.md) | [🇨🇳 中文](README_CN.md)
+**Language** | **语言**: [🇺🇸 EN](README_EN.md) | [🇨🇳 中文](README.md)
 
 </div>
 
@@ -343,7 +343,5 @@ pre-commit install
 <div align="center">
 
 **如果觉得有帮助，请给个 ⭐ Star！**
-
-由 LegendQA 团队 ❤️ 制作
 
 </div> 
