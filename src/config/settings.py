@@ -25,6 +25,7 @@ class Config:
     max_block_size: int = 1500
     min_block_size: int = 100
     extract_ratio: float = 1.0
+    use_intelligent_segmentation: bool = True  # Use intelligent segmentation by default
     
     # QA filtering
     enable_qa_filter: bool = False
@@ -74,6 +75,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         'MAX_BLOCK_SIZE': 'max_block_size',
         'MIN_BLOCK_SIZE': 'min_block_size',
         'EXTRACT_RATIO': 'extract_ratio',
+        'USE_INTELLIGENT_SEGMENTATION': 'use_intelligent_segmentation',
         'ENABLE_QA_FILTER': 'enable_qa_filter',
         'LOG_LEVEL': 'log_level',
     }
@@ -86,7 +88,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
                 env_value = float(env_value)
             elif config_attr in ['max_block_size', 'min_block_size']:
                 env_value = int(env_value)
-            elif config_attr in ['enable_qa_filter']:
+            elif config_attr in ['enable_qa_filter', 'use_intelligent_segmentation']:
                 env_value = env_value.lower() in ('true', '1', 'yes', 'on')
             
             setattr(config, config_attr, env_value)

@@ -29,7 +29,9 @@ class LLMClient:
             # Try to list models to test connection
             models = self.client.list()
             self.logger.info(f"Successfully connected to Ollama at {self.host}")
-            self.logger.info(f"Available models: {[m['name'] for m in models.get('models', [])]}")
+            model_list = models.get('models', []) if isinstance(models, dict) else []
+            model_names = [m.get('name', 'unknown') for m in model_list if isinstance(m, dict)]
+            self.logger.info(f"Available models: {model_names}")
             return True
         except Exception as e:
             self.logger.error(f"Failed to connect to Ollama at {self.host}: {e}")
@@ -76,8 +78,9 @@ class LLMClient:
         """
         try:
             models = self.client.list()
-            for model in models.get('models', []):
-                if model['name'] == self.model_name:
+            model_list = models.get('models', []) if isinstance(models, dict) else []
+            for model in model_list:
+                if isinstance(model, dict) and model.get('name') == self.model_name:
                     return model
             return None
         except Exception as e:
@@ -92,7 +95,8 @@ class LLMClient:
         """
         try:
             models = self.client.list()
-            model_names = [m['name'] for m in models.get('models', [])]
+            model_list = models.get('models', []) if isinstance(models, dict) else []
+            model_names = [m.get('name', 'unknown') for m in model_list if isinstance(m, dict)]
             available = self.model_name in model_names
             
             if not available:
