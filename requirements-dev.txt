@@ -10,6 +10,17 @@ flake8>=6.0.0
 mypy>=1.5.0
 pre-commit>=3.4.0
 
+# Security scanning tools
+safety>=2.3.0
+bandit>=1.7.0
+
+# Build and packaging tools
+build>=0.10.0
+twine>=4.0.0
+
+# Integration testing dependencies
+reportlab>=4.0.0
+
 # Optional tools for analysis and visualization
 streamlit>=1.28.0
 pandas>=2.0.0
