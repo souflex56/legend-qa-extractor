@@ -1,5 +1,11 @@
 # 🔍 Legend QA Extractor
 
+<div align="right">
+
+**Language** | **语言**: [🇺🇸 EN](README.md) | [🇨🇳 中文](README_CN.md)
+
+</div>
+
 <div align="center">
 
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/downloads/)
@@ -21,6 +27,15 @@
 - 🔧 **Developer Friendly**: Modular architecture, comprehensive tests, and CLI interface
 - 📊 **Quality Metrics**: Built-in extraction quality assessment and detailed logging
 - 🚀 **Production Ready**: Type hints, error handling, and professional code structure
+
+## 🔄 How It Works
+
+```
+📄 PDF Input → 📝 Text Split → 🔍 Filter Blocks → 🤖 AI Analysis → 📊 Q&A Pairs
+                ↑ Block Size      ↑ QA Filter      ↑ Model + Temp
+               100-1500 chars    on/off + Sample   qwen2.5:7b/custom
+                 (custom)           0.1-1.0           Temp: 0.0-1.0
+```
 
 ## 🚀 Quick Start
 
@@ -174,9 +189,9 @@ The tool generates JSONL files with structured Q&A pairs:
 
 ```json
 {
-  "question": "什么是价值投资？",
-  "answer": "价值投资是一种投资策略，重点关注公司的内在价值...",
-  "source_text": "网友：什么是价值投资？\n段永平：价值投资是一种..."
+  "question": "What is value investing?",
+  "answer": "Value investing is an investment strategy that focuses on the intrinsic value of companies...",
+  "source_text": "User: What is value investing?\nExpert: Value investing is an investment strategy..."
 }
 ```
 
@@ -228,22 +243,6 @@ pytest -m integration
 4. **LLMClient**: Manages communication with Ollama
 5. **Config**: Centralized configuration management
 
-### Processing Pipeline
-
-```mermaid
-graph TD
-    A[PDF Document] --> B[Text Extraction]
-    B --> C[Text Segmentation]
-    C --> D{QA Filter?}
-    D -->|Yes| E[Filter QA Blocks]
-    D -->|No| F[All Blocks]
-    E --> G[LLM Processing]
-    F --> G
-    G --> H[JSON Extraction]
-    H --> I[Post-processing]
-    I --> J[JSONL Output]
-```
-
 ## 🎛️ Configuration Options
 
 | Parameter | Description | Default | Example |
@@ -262,16 +261,6 @@ graph TD
 3. **QA Filtering**: Enable for documents with clear Q&A structure to improve speed
 4. **Sampling**: Use `extract_ratio=0.1` for quick testing
 5. **Batch Processing**: Process multiple files with different configurations
-
-## 🔍 Quality Assessment
-
-The tool provides comprehensive quality metrics:
-
-- Extraction success rate
-- Average question/answer lengths
-- Duplicate detection
-- Processing statistics
-- Error categorization
 
 ## 🛠️ Troubleshooting
 
