@@ -1,0 +1,25 @@
+enable_error_log: true
+enable_qa_filter: false
+enable_success_log: true
+extract_ratio: 1.0
+known_prefixes:
+- 网友
+- 记者
+- 问
+- 提问者
+- 主持人
+- 文章引用
+- Q
+- 观众
+- 评论
+- 主持
+- 用户
+log_level: INFO
+max_block_size: 1500
+min_block_size: 100
+model_name: qwen2.5:7b-instruct
+ollama_host: http://localhost:11434
+output_dir: output
+output_filename: output_final_qa.jsonl
+pdf_filename: uploaded.pdf
+temperature: 0.1

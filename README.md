@@ -1,178 +1,362 @@
-# ​**LegendQA-Extractor**
+# 🔍 Legend QA Extractor
 
----
+<div align="center">
 
-## 🧩 项目简介
+[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-本项目是一个 **全流程自动化中文问答对提取系统**，面向结构化或半结构化 PDF 文档（如段永平访谈、投资随笔等），可自动生成标准化 JSON 格式问答对，直接用于自定义大模型微调（LoRA / SFT）或多领域问答数据构建（金融、访谈、教育等）。系统基于本地大模型（Ollama + Qwen 系列）推理，可在私有环境独立部署，无需云端 API，保障数据安全与隐私。示例项目中，系统从段永平 300 页访谈 PDF 中成功提取出 1,095 个高质量问答对，显著提升数据标注自动化与工程化效率
+**A professional Q&A pair extraction tool from PDF documents using local LLMs**
 
-## ⚙️ 快速上手
+*Transform your PDF documents into structured Q&A datasets for AI training*
 
-#### ✅ 安装依赖
+</div>
+
+## ✨ Key Features
+
+- 🤖 **Local LLM Integration**: Uses Ollama with models like Qwen2.5 for privacy-focused processing
+- 📄 **Smart PDF Processing**: Advanced text extraction and intelligent block segmentation
+- 🎯 **Intelligent Q&A Detection**: Multi-pattern recognition for various question-answer formats
+- ⚙️ **Highly Configurable**: YAML configuration files with environment variable support
+- 🔧 **Developer Friendly**: Modular architecture, comprehensive tests, and CLI interface
+- 📊 **Quality Metrics**: Built-in extraction quality assessment and detailed logging
+- 🚀 **Production Ready**: Type hints, error handling, and professional code structure
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python 3.8+
+- [Ollama](https://ollama.ai/) installed and running
+- A PDF document to process
+
+### Installation
+
 ```bash
+# Clone the repository
+git clone https://github.com/yourusername/legend-qa-extractor.git
+cd legend-qa-extractor
+
+# Set up environment (creates venv, installs dependencies)
+chmod +x scripts/setup_environment.sh
+./scripts/setup_environment.sh
+
+# Or manual setup
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
-#### **✅ 配置 PDF 文件**
-- 将你的 PDF 文件（例如 uploaded.pdf）放入项目根目录，或根据需要修改 PDF_FILENAME 配置项
-#### **✅ 启动本地 Ollama 模型**
-```
-ollama serve
-```
-- 确保已安装需要的模型（如 qwen2.5:7b-instruct）
-- 可通过 ollama list 查看和管理本地模型
 
-#### **✅ 运行提取脚本**
-```
-python extract_qa.py
-```
-- 默认输出文件位于：output/output_final_duan-qa.jsonl
-- 每行一个 JSON 格式问答对，示例内容如下：
-```
-{
-"question": "什么是 stop doing list？",
-"answer": "所谓要做对的事情实际上是通过不做不对的事情来实现的。",
-"source_text": "完整原文块..."
-}
+### Basic Usage
+
+```bash
+# Extract Q&A pairs from a PDF
+python extract_qa.py document.pdf
+
+# Use custom output file
+python extract_qa.py document.pdf -o my_output.jsonl
+
+# Process only 10% for testing
+python extract_qa.py document.pdf --sample 0.1
+
+# Use different model
+python extract_qa.py document.pdf --model qwen2.5:14b-instruct
+
+# Create configuration file
+python extract_qa.py --create-config
+
+# Validate setup
+python extract_qa.py --validate
 ```
 
-## 技术亮点
+## 📁 Project Structure
 
-### 🌀 混合自然段分块策略 (`create_hybrid_blocks`)
-- ​**智能段落合并算法**​：基于自然段边界动态合并文本，确保问答对完整保留在同一区块
-- ​**自适应块长控制**​：可配置`MAX_BLOCK_SIZE`(默认1500字符)和`MIN_BLOCK_SIZE`(默认100字符)，平衡上下文完整性与处理效率
-- ​**语义连续性保证**​：优先保留完整问答结构，避免跨块拆分导致的语义割裂
+```
+legend-qa-extractor/
+├── src/                          # Core source code
+│   ├── config/                   # Configuration management
+│   ├── core/                     # Core processing modules
+│   │   ├── pdf_processor.py      # PDF text extraction
+│   │   ├── text_processor.py     # Text segmentation & cleaning
+│   │   ├── qa_extractor.py       # Q&A pair extraction
+│   │   └── llm_client.py         # Ollama integration
+│   └── utils/                    # Utility functions
+├── config/                       # Configuration files
+├── examples/                     # Usage examples
+├── tests/                        # Test suite
+├── scripts/                      # Setup and utility scripts
+├── extract_qa.py                 # CLI entry point
+└── output/                       # Generated results
+```
+
+## ⚙️ Configuration
+
+### YAML Configuration File
+
+Create a configuration file for your specific needs:
+
+```yaml
+# config/config.yaml
+pdf_filename: "your_document.pdf"
+output_filename: "extracted_qa.jsonl"
+model_name: "qwen2.5:7b-instruct"
+max_block_size: 1500
+extract_ratio: 1.0
+enable_qa_filter: false
+```
+
+### Environment Variables
+
+Override settings with environment variables:
+
+```bash
+export PDF_FILENAME="document.pdf"
+export OLLAMA_MODEL="qwen2.5:14b-instruct"
+export MAX_BLOCK_SIZE=2000
+export EXTRACT_RATIO=0.5
+```
+
+### Command Line Options
+
+```bash
+python extract_qa.py --help
+
+Options:
+  --config CONFIG         YAML configuration file
+  --output OUTPUT         Output JSONL file
+  --model MODEL          Ollama model name
+  --sample RATIO         Sample ratio (0.0-1.0)
+  --enable-qa-filter     Only process Q&A blocks
+  --temperature TEMP     Model temperature
+  --log-level LEVEL      Logging level
+  --validate             Validate setup only
+```
+
+## 🎯 Advanced Usage
+
+### Programmatic API
+
 ```python
-def create_hybrid_blocks(text: str, max_size: int, min_size: int) -> List[str]:
-    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-    # ... 动态合并算法 ...
-````
-- 支持按比例对 PDF采样 进行快速验证（`EXTRACT_RATIO`），例如`EXTRACT_RATIO` = 0.1 只处理前 10% PDF文档，可进行小批量测试
-  
-### 🔍 多模态问答检测 (`block_has_qa`)
+from src.config import Config
+from src.processor import QAExtractionProcessor
 
-- ​**三层识别机制**​：
-    - 直接提问模式：`网友[:：]`、`问[:：]`等
-    - 间接提问模式：`文章引用`、`有人认为`等
-    - 回答者标识：`段永平[:：]`、`段[:：]`等
-- ​**精准过滤逻辑**​：仅当问题模式与回答标识同时存在时才判定为有效问答块。
-- 可选开关 `ENABLE_QA_FILTER`：启用后仅强制性提取包含特定前缀词问答模式的块，大幅提高LLM生成效率与输出数据质量。可自定义规则性前缀词组合，如「问题（记者、网友、Q、观众等） + 回答（段永平、段、专家等）」
-- ​**可配置开关**​：`ENABLE_QA_FILTER`参数控制是否启用过滤(默认关闭)
+# Create configuration
+config = Config()
+config.pdf_filename = "document.pdf"
+config.model_name = "qwen2.5:7b-instruct"
+config.extract_ratio = 0.1  # Quick test
 
-### 🤖 大模型集成与Prompt工程
+# Initialize processor
+processor = QAExtractionProcessor(config)
 
-- ​**本地化部署**​：通过Ollama框架集成Qwen等开源大模型（默认 `qwen2.5:7b-instruct`）推理，支持自定义温度、模型细节参数，满足研发验证或生产需求
-
-```python
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
+# Validate setup
+validation = processor.validate_setup()
+if validation['valid']:
+    # Process PDF
+    results = processor.process_pdf()
+    print(f"Extracted {results['stats']['qa_pairs_extracted']} Q&A pairs")
 ```
 
-- ​**领域定制Prompt**（`BASE_PROMPT_CHAT`）​：包含：
-    - 明确的任务指令与提取规则
-    - 多种问答形式示例(直接提问/文章引用/描述引出)
-    - 严格的JSON输出格式约束
-- ​**温度参数控制**​：`temperature=0.1`确保生成稳定性
-
-
-
-###  🛠️ 健壮的数据处理流水线
-
-#### 1. 预处理标准化 (`preprocess_qa_text`)
-
-- 统一问答标识符格式(网友：→网友：)
-- 清理冗余空行与空格
-
-#### 2. 智能后处理
+### Custom Configuration
 
 ```python
-def clean_question_text(question: str) -> str:
-    # 已知前缀列表优先匹配 + 宽松正则兜底
+# Custom settings for interview transcripts
+config = Config()
+config.known_prefixes.extend(["面试官", "候选人", "HR"])
+config.max_block_size = 2000
+config.enable_qa_filter = True
+config.temperature = 0.05
 ```
 
-- ​**问题文本清洗**​：去除冗余前缀(网友：/问：等)
-- ​**多模式JSON解析**​：
-    - 支持数组/独立对象/多对象混合格式
-    - 空结果过滤与格式校验
+## 📊 Output Format
 
-```python
-def extract_json(text: str) -> List[dict]:
-    # 支持四种解析场景...
-```
-**示例：**
-
-生成的 JSON 格式问答对：
+The tool generates JSONL files with structured Q&A pairs:
 
 ```json
 {
-  "question": "什么是 stop doing list？",
-  "answer": "所谓要做对的事情其实是通过不做不对的事情来实现的，这就是 stop doing list 的核心。",
-  "source_text": "网友：什么是 stop doing list？ 段永平：所谓要做对的事情其实是通过不做不对的事情来实现的，这就是 stop doing list 的核心。"
+  "question": "什么是价值投资？",
+  "answer": "价值投资是一种投资策略，重点关注公司的内在价值...",
+  "source_text": "网友：什么是价值投资？\n段永平：价值投资是一种..."
 }
 ```
-### 📊 全链路可追溯性
 
-- ​**结构化日志系统**​：
-    - `extraction_errors_final.log`：记录失败块及原因
-    - `extraction_success_final.log`：保存完整问答上下文
-- ​**数据溯源**​：每个问答对包含`source_text`原始文本块
-- ​**进度可视化**​：tqdm进度条实时显示处理状态
+## 🔧 Development
 
-##  ⚙️ 高度可配置架构
+### Setup Development Environment
 
-| 参数                 | 功能       | 默认值                 |
-| ------------------ | -------- | ------------------- |
-| `EXTRACT_RATIO`    | 块采样比例    | 1.0 (100%)          |
-| `MAX_BLOCK_SIZE`   | 最大块字符数   | 1500                |
-| `MIN_BLOCK_SIZE`   | 最小块字符数   | 100                 |
-| `ENABLE_QA_FILTER` | 问答过滤开关   | False               |
-| `MODEL_NAME`       | Ollama模型 | qwen2.5:7b-instruct |
+```bash
+# Install with development dependencies
+./scripts/setup_environment.sh --dev
 
-## 性能优化策略
+# Install pre-commit hooks
+pre-commit install
 
-1. ​**动态采样机制**​：`EXTRACT_RATIO`支持快速验证(如设0.1处理前10%块)
-2. ​**批量预处理**​：文本标准化提前完成，减少模型负担
-3. ​**错误隔离**​：单块处理失败不影响整体流程
-4. ​**资源控制**​：严格限制输入长度(MAX_BLOCK_SIZE)
+# Run tests
+pytest
 
+# Code formatting
+black src/ tests/
+isort src/ tests/
+
+# Type checking
+mypy src/
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=src
+
+# Run specific test
+pytest tests/test_text_processor.py
+
+# Run integration tests
+pytest -m integration
+```
+
+## 🏗️ Architecture
+
+### Core Components
+
+1. **PDFProcessor**: Extracts text from PDF documents
+2. **TextProcessor**: Segments text and applies cleaning
+3. **QAExtractor**: Identifies and extracts Q&A pairs using LLM
+4. **LLMClient**: Manages communication with Ollama
+5. **Config**: Centralized configuration management
+
+### Processing Pipeline
+
+```mermaid
+graph TD
+    A[PDF Document] --> B[Text Extraction]
+    B --> C[Text Segmentation]
+    C --> D{QA Filter?}
+    D -->|Yes| E[Filter QA Blocks]
+    D -->|No| F[All Blocks]
+    E --> G[LLM Processing]
+    F --> G
+    G --> H[JSON Extraction]
+    H --> I[Post-processing]
+    I --> J[JSONL Output]
+```
+
+## 🎛️ Configuration Options
+
+| Parameter | Description | Default | Example |
+|-----------|-------------|---------|---------|
+| `pdf_filename` | PDF file to process | `"uploaded.pdf"` | `"interview.pdf"` |
+| `model_name` | Ollama model | `"qwen2.5:7b-instruct"` | `"qwen2.5:14b"` |
+| `max_block_size` | Max text block size | `1500` | `2000` |
+| `extract_ratio` | Fraction of blocks to process | `1.0` | `0.1` |
+| `enable_qa_filter` | Filter blocks with QA patterns | `false` | `true` |
+| `temperature` | Model creativity | `0.1` | `0.05` |
+
+## 📈 Performance Tips
+
+1. **Model Selection**: Use `qwen2.5:7b-instruct` for speed, `qwen2.5:14b-instruct` for quality
+2. **Block Size**: Larger blocks (2000+) provide more context but slower processing
+3. **QA Filtering**: Enable for documents with clear Q&A structure to improve speed
+4. **Sampling**: Use `extract_ratio=0.1` for quick testing
+5. **Batch Processing**: Process multiple files with different configurations
+
+## 🔍 Quality Assessment
+
+The tool provides comprehensive quality metrics:
+
+- Extraction success rate
+- Average question/answer lengths
+- Duplicate detection
+- Processing statistics
+- Error categorization
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+**Ollama Connection Failed**
+```bash
+# Check if Ollama is running
+ollama serve
+
+# Test connection
+curl http://localhost:11434/api/tags
+```
+
+**Model Not Found**
+```bash
+# Pull the required model
+ollama pull qwen2.5:7b-instruct
+```
+
+**Low Quality Extractions**
+- Increase `temperature` for more creative responses
+- Adjust `max_block_size` for better context
+- Enable `enable_qa_filter` for focused processing
+
+### Debug Mode
+
+```bash
+# Enable verbose logging
+python extract_qa.py document.pdf --log-level DEBUG
+
+# Check validation
+python extract_qa.py --validate
+```
+
+## 📚 Examples
+
+See the `examples/` directory for:
+- `run_example.py`: Programmatic usage examples
+- `sample_config.yaml`: Configuration templates
+- Various use case scenarios
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our contributing guidelines:
+
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality
+4. Run the test suite
+5. Submit a pull request
+
+### Development Setup
+
+```bash
+git clone https://github.com/yourusername/legend-qa-extractor.git
+cd legend-qa-extractor
+./scripts/setup_environment.sh --dev
+pre-commit install
+```
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [Ollama](https://ollama.ai/) for local LLM infrastructure
+- [PyMuPDF](https://pymupdf.readthedocs.io/) for PDF processing
+- The open-source community for inspiration and tools
+
+## 📞 Support
+
+- 📖 [Documentation](docs/)
+- 🐛 [Issue Tracker](https://github.com/yourusername/legend-qa-extractor/issues)
+- 💬 [Discussions](https://github.com/yourusername/legend-qa-extractor/discussions)
 
 ---
 
+<div align="center">
 
-## ⚖️ 当前项目局限性
+**Star ⭐ this repository if you find it helpful!**
 
-- 🔎 **依赖本地大模型推理能力与前缀规则**
-  - 基于固定的前缀（如「网友」「问」「段永平」等），对结构化、格式规范的访谈或随笔效果最佳
-  - 对于自由风格或无明显前缀标识的文本（如非正式社群问答、论坛对话），提取准确率更依赖大模型的推理能力，结果会出现波动
+Made with ❤️ by the LegendQA Team
 
-- 💬 **问答对质量强依赖 Prompt 与模型表现**
-  - 如果 Prompt 设计或模型微调不够细致，容易生成空、混淆或不完整的问答对
-  - 需要进行后期人工审核、多轮 Prompt 优化或引入自监督验证机制，才能保证高质量输出
-
-- 📄 **上下文分块仍需手动调优**
-  - 虽然混合自然段分块策略能最大限度保留上下文，但块大小（`MAX_BLOCK_SIZE`, `MIN_BLOCK_SIZE`）参数需根据文档内容人工调试
-  - 在长程依赖场景（如 >1500 字符）中，部分上下文语义连贯性可能仍会出现损失
-
----
-
-### 💡 未来方向
-
-- 引入 **自适应动态分块**（基于语义向量或分句打分），减少人工参数调试
-- 设计 **多策略 Prompt 自动生成器**，根据不同文档自动切换提示风格
-- 集成 **后验质量检测与一致性校验**，降低人工审核成本
-
-##  ⭐️ 欢迎贡献
-
-如果你有新的分块策略、Prompt 优化、过滤逻辑或金融文本提取思路，欢迎 Fork & PR！👏
-
-⸻
-
-##  📬 联系
-
-若有任何问题或合作意向，欢迎通过 Issues 或邮件联系。
-
-⸻
-
-##  💬 Enjoy your Q&A mining journey!
-
----
+</div>
 
 

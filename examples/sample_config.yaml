@@ -1,0 +1,64 @@
+# Sample Configuration for Legend QA Extractor
+# Copy this file and modify it according to your needs
+
+# ==================== File Configuration ====================
+# PDF file to process (can be absolute or relative path)
+pdf_filename: "sample_document.pdf"
+
+# Output file name for extracted Q&A pairs
+output_filename: "extracted_qa_pairs.jsonl"
+
+# Output directory for results and logs
+output_dir: "results"
+
+# ==================== Model Configuration ====================
+# Ollama model name to use for Q&A extraction
+# Popular choices: qwen2.5:7b-instruct, qwen2.5:14b-instruct, llama2:13b-chat
+model_name: "qwen2.5:7b-instruct"
+
+# Ollama server host (change if running Ollama on different machine)
+ollama_host: "http://localhost:11434"
+
+# Model temperature for response generation (0.0 to 1.0)
+# 0.0 = most consistent, 1.0 = most creative
+temperature: 0.1
+
+# ==================== Text Processing Configuration ====================
+# Maximum block size in characters (larger = more context, slower processing)
+max_block_size: 1500
+
+# Minimum block size in characters (smaller blocks are discarded)
+min_block_size: 100
+
+# Extract ratio (0.0 to 1.0) - fraction of blocks to process
+# Use 0.1 for quick testing with 10% of blocks
+extract_ratio: 1.0
+
+# ==================== Q&A Filtering Configuration ====================
+# Enable Q&A filtering (only process blocks with Q&A patterns)
+# Set to true for faster processing when you know document has clear Q&A structure
+enable_qa_filter: false
+
+# Known prefixes for question identification (add your own if needed)
+known_prefixes:
+  - "网友"
+  - "记者"
+  - "问"
+  - "提问者"
+  - "主持人"
+  - "文章引用"
+  - "Q"
+  - "观众"
+  - "评论"
+  - "主持"
+  - "用户"
+  - "面试官"  # Added for interview documents
+  - "嘉宾"    # Added for guest interviews
+
+# ==================== Logging Configuration ====================
+# Log level options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level: "INFO"
+
+# Enable detailed logging (useful for debugging)
+enable_success_log: true
+enable_error_log: true 

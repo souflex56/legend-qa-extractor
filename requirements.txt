@@ -1,5 +1,9 @@
-ollama
-PyMuPDF
-tqdm
-streamlit
-pandas 
+# Core dependencies
+ollama>=0.1.7
+PyMuPDF>=1.23.0
+tqdm>=4.65.0
+PyYAML>=6.0
+
+# Development dependencies (optional, install with: pip install -r requirements-dev.txt)
+# streamlit>=1.28.0
+# pandas>=2.0.0 
