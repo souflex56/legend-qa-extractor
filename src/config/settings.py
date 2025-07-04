@@ -22,13 +22,22 @@ class Config:
     temperature: float = 0.1
     
     # Text processing
-    max_block_size: int = 1500
-    min_block_size: int = 100
+    max_block_size: int = 1000
+    min_block_size: int = 200
     extract_ratio: float = 1.0
-    use_intelligent_segmentation: bool = True  # Use intelligent segmentation by default
+    
+    # Smart block processing (V1)
+    qa_allowance_ratio: float = 1.1
+    enable_sliding_context: bool = False
+    enable_llm_anchor: bool = False
+    anchor_keywords_count: int = 2
+    
+    # Token management configuration
+    max_prompt_tokens: int = 6000
+    enable_token_monitoring: bool = True  # 启用自动token监控和报告
     
     # QA filtering
-    enable_qa_filter: bool = False
+    enable_qa_filter: bool = True
     known_prefixes: List[str] = None
     
     # Logging
@@ -75,7 +84,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
         'MAX_BLOCK_SIZE': 'max_block_size',
         'MIN_BLOCK_SIZE': 'min_block_size',
         'EXTRACT_RATIO': 'extract_ratio',
-        'USE_INTELLIGENT_SEGMENTATION': 'use_intelligent_segmentation',
+        'QA_ALLOWANCE_RATIO': 'qa_allowance_ratio',
+        'ENABLE_SLIDING_CONTEXT': 'enable_sliding_context',
+        'ENABLE_LLM_ANCHOR': 'enable_llm_anchor',
+        'ANCHOR_KEYWORDS_COUNT': 'anchor_keywords_count',
         'ENABLE_QA_FILTER': 'enable_qa_filter',
         'LOG_LEVEL': 'log_level',
     }
@@ -84,11 +96,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
         env_value = os.getenv(env_var)
         if env_value is not None:
             # Type conversion
-            if config_attr in ['temperature', 'extract_ratio']:
+            if config_attr in ['temperature', 'extract_ratio', 'qa_allowance_ratio']:
                 env_value = float(env_value)
-            elif config_attr in ['max_block_size', 'min_block_size']:
+            elif config_attr in ['max_block_size', 'min_block_size', 'anchor_keywords_count']:
                 env_value = int(env_value)
-            elif config_attr in ['enable_qa_filter', 'use_intelligent_segmentation']:
+            elif config_attr in ['enable_qa_filter', 'enable_sliding_context', 'enable_llm_anchor']:
                 env_value = env_value.lower() in ('true', '1', 'yes', 'on')
             
             setattr(config, config_attr, env_value)

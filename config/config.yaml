@@ -1,7 +1,11 @@
+anchor_keywords_count: 2
 enable_error_log: true
+enable_llm_anchor: true
 enable_qa_filter: false
+enable_sliding_context: true
 enable_success_log: true
-extract_ratio: 1.0
+enable_token_monitoring: true
+extract_ratio: 0.1
 known_prefixes:
 - 网友
 - 记者
@@ -16,10 +20,12 @@ known_prefixes:
 - 用户
 log_level: INFO
 max_block_size: 1500
-min_block_size: 100
+max_prompt_tokens: 6000
+min_block_size: 200
 model_name: qwen2.5:7b-instruct
 ollama_host: http://localhost:11434
 output_dir: output
 output_filename: output_final_qa.jsonl
 pdf_filename: uploaded.pdf
+qa_allowance_ratio: 1.1
 temperature: 0.1

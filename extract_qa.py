@@ -6,7 +6,7 @@ Legend QA Extractor - Command Line Interface
 A professional Q&A pair extraction tool from PDF documents using local LLMs.
 """
 
-import argparse
+import argparse # 解析命令行参数
 import sys
 import os
 from pathlib import Path
@@ -306,9 +306,12 @@ def main():
         print(f"❌ Failed to load configuration: {e}")
         sys.exit(1)
     
-    # Validate required arguments
-    if not args.validate and not args.pdf_file:
-        parser.error("PDF file is required unless using --validate or --create-config")
+    # Validate required arguments - check both command line and config file
+    if not args.validate and not args.pdf_file and not config.pdf_filename:
+        parser.error("PDF file is required either as command line argument or in configuration file (unless using --validate or --create-config)")
+    
+    # Use PDF file from config if not provided in command line
+    pdf_file_to_process = args.pdf_file or config.pdf_filename
     
     # Initialize processor
     try:
@@ -332,8 +335,8 @@ def main():
     
     # Process the PDF
     try:
-        print(f"🚀 Starting Q&A extraction from: {args.pdf_file}")
-        results = processor.process_pdf(args.pdf_file)
+        print(f"🚀 Starting Q&A extraction from: {pdf_file_to_process}")
+        results = processor.process_pdf(pdf_file_to_process)
         print_results(results)
         
         if results['success']:

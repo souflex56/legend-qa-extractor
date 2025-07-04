@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 from .config import Config
 from .core import PDFProcessor, TextProcessor, QAExtractor, LLMClient
+from .core.smart_block_processor import SmartBlockProcessor
 from .utils import setup_logger, setup_extraction_loggers, save_single_jsonl_item, ensure_dir
 
 
@@ -36,7 +37,7 @@ class QAExtractionProcessor:
         # Initialize processors
         self.pdf_processor = PDFProcessor()
         self.text_processor = TextProcessor(known_prefixes=config.known_prefixes)
-        self.qa_extractor = QAExtractor()
+        self.qa_extractor = QAExtractor(max_prompt_tokens=config.max_prompt_tokens)
         
         # Initialize LLM client
         try:
@@ -47,6 +48,28 @@ class QAExtractionProcessor:
         except Exception as e:
             self.logger.error(f"Failed to initialize LLM client: {e}")
             raise
+        
+        # Initialize token monitoring
+        self.token_stats = {
+            'prompt_uses': {'compact': 0, 'full': 0},
+            'token_usage': [],
+            'truncations': 0,
+            'max_token_usage': 0,
+            'min_token_usage': float('inf'),
+            'total_blocks_processed': 0
+        }
+        
+        # Initialize SmartBlockProcessor
+        self.smart_block_processor = SmartBlockProcessor(
+            text_processor=self.text_processor,
+            llm_client=self.llm_client,
+            max_block_size=config.max_block_size,
+            min_block_size=config.min_block_size,
+            qa_allowance_ratio=config.qa_allowance_ratio,
+            enable_sliding_context=config.enable_sliding_context,
+            enable_llm_anchor=config.enable_llm_anchor,
+            anchor_keywords_count=config.anchor_keywords_count
+        )
         
         self.logger.info("QA Extraction Processor initialized successfully")
     
@@ -82,26 +105,48 @@ class QAExtractionProcessor:
         self.logger.info(f"📊 PDF info: {pdf_info.get('page_count', 'unknown')} pages")
         
         # Process text and create blocks
-        self.logger.info("✂️ Creating text blocks...")
-        blocks = self.text_processor.create_hybrid_blocks(
-            raw_text, 
-            self.config.max_block_size, 
-            self.config.min_block_size
-        )
-        self.logger.info(f"✅ Created {len(blocks)} text blocks")
+        self.logger.info("✂️ Starting text block generation using SmartBlockProcessor...")
         
-        # Filter blocks if QA filtering is enabled
+        # 预处理文本
+        preprocessed_text = self.text_processor.preprocess_qa_text(raw_text)
+        
+        # **重构改动**: 调用新的智能分块器，但暂时不生成LLM anchor
+        # 临时禁用LLM anchor功能，稍后为问答对生成主题
+        original_enable_llm_anchor = self.smart_block_processor.enable_llm_anchor
+        self.smart_block_processor.enable_llm_anchor = False
+        
+        processed_blocks_data = self.smart_block_processor.process_document_into_blocks(preprocessed_text)
+        
+        # 恢复原始设置
+        self.smart_block_processor.enable_llm_anchor = original_enable_llm_anchor
+        
+        self.logger.info(f"✅ Generated {len(processed_blocks_data)} smart text blocks for LLM processing.")
+        
+        # --- BEGIN: Added for block size inspection ---
+        self.logger.info("🔍 Individual Block Sizes:")
+        total_chars = 0
+        for i, block_data in enumerate(processed_blocks_data):
+            size = len(block_data.get('content', ''))
+            total_chars += size
+            self.logger.info(f"  - Block {i+1}/{len(processed_blocks_data)}: {size} characters")
+        if processed_blocks_data:
+            avg_size = total_chars / len(processed_blocks_data)
+            self.logger.info(f"  - Average block size: {avg_size:.0f} characters")
+        # --- END: Added for block size inspection ---
+        
+        # Filter blocks if QA filtering is enabled - 现在操作的是包含元数据的块字典列表
         if self.config.enable_qa_filter:
-            original_count = len(blocks)
-            blocks = [b for b in blocks if self.text_processor.block_has_qa(b)]
-            self.logger.info(f"⚡ QA filtering: {len(blocks)} blocks remaining (from {original_count})")
+            original_count = len(processed_blocks_data)
+            processed_blocks_data = [b for b in processed_blocks_data if self.text_processor.block_has_qa(b["content"])]
+            self.logger.info(f"⚡ QA filtering: {len(processed_blocks_data)} blocks remaining (from {original_count})")
         
-        # Apply sampling ratio
+        # Apply sampling ratio - 现在操作的是包含元数据的块字典列表
         if self.config.extract_ratio < 1.0:
-            blocks = self.text_processor.filter_blocks_by_ratio(blocks, self.config.extract_ratio)
-            self.logger.info(f"⚡ Applied sampling ratio: {len(blocks)} blocks selected")
+            sample_size = max(int(len(processed_blocks_data) * self.config.extract_ratio), 1)
+            processed_blocks_data = processed_blocks_data[:sample_size]
+            self.logger.info(f"⚡ Applied sampling ratio: {len(processed_blocks_data)} blocks selected")
         
-        if not blocks:
+        if not processed_blocks_data:
             self.logger.warning("⚠️ No valid blocks found for processing")
             return {
                 'success': False,
@@ -118,14 +163,18 @@ class QAExtractionProcessor:
             pass
         
         # Process blocks and extract Q&A pairs
-        self.logger.info(f"🤖 Processing {len(blocks)} blocks with LLM...")
-        results = self._process_blocks(blocks, output_path)
+        self.logger.info(f"🤖 Processing {len(processed_blocks_data)} blocks with LLM...")
+        results = self._process_blocks(processed_blocks_data, output_path, original_enable_llm_anchor)
         
         # Generate final statistics
-        stats = self._generate_statistics(results, pdf_info, len(blocks))
+        stats = self._generate_statistics(results, pdf_info, len(processed_blocks_data))
         
         self.logger.info(f"🎉 Processing completed! Extracted {stats['qa_pairs_extracted']} Q&A pairs")
         self.logger.info(f"📁 Output saved to: {output_path}")
+        
+        # 输出token监控总结（如果启用）
+        if self.config.enable_token_monitoring:
+            self._log_token_monitoring_summary()
         
         return {
             'success': True,
@@ -134,7 +183,7 @@ class QAExtractionProcessor:
             'pdf_info': pdf_info
         }
     
-    def _process_blocks(self, blocks: List[str], output_path: str) -> List[Dict[str, Any]]:
+    def _process_blocks(self, blocks: List[Dict[str, Any]], output_path: str, enable_llm_anchor: bool) -> List[Dict[str, Any]]:
         """Process text blocks and extract Q&A pairs.
         
         Args:
@@ -147,12 +196,25 @@ class QAExtractionProcessor:
         results = []
         success_count = 0
         
-        for block_idx, block in enumerate(tqdm(blocks, desc="Extracting Q&A pairs")):
-            # Preprocess text
-            processed_block = self.text_processor.preprocess_qa_text(block)
+        for block_idx, block_data in enumerate(tqdm(blocks, desc="Extracting Q&A pairs")):
+            # **关键改动**: 提取块内容和元数据
+            block_content = block_data["content"]
+            block_anchor = block_data.get("anchor", "")
+            sliding_context = block_data.get("sliding_context", "")
             
-            # Create prompt
-            prompt = self.qa_extractor.create_prompt(processed_block)
+            # Preprocess text
+            processed_block = self.text_processor.preprocess_qa_text(block_content)
+            
+            # **关键改动**: 使用新的 prompt 格式，传入上下文和锚点
+            prompt = self.qa_extractor.create_prompt(
+                processed_block,
+                sliding_context=sliding_context,
+                block_anchor=block_anchor
+            )
+            
+            # Token监控：记录使用情况（如果启用）
+            if self.config.enable_token_monitoring:
+                self._track_token_usage(prompt, block_anchor, sliding_context)
             
             # Call LLM
             response = self.llm_client.call_ollama(
@@ -165,7 +227,7 @@ class QAExtractionProcessor:
                 if self.error_logger:
                     self.error_logger.error(
                         f"LLM call failed for block {block_idx + 1}\n"
-                        f"Block content:\n{block}"
+                        f"Block content:\n{block_content}"
                     )
                 results.append({
                     'block_idx': block_idx,
@@ -184,7 +246,7 @@ class QAExtractionProcessor:
                     self.error_logger.error(
                         f"No valid Q&A pairs extracted for block {block_idx + 1}\n"
                         f"LLM response: {response}\n"
-                        f"Block content:\n{block}"
+                        f"Block content:\n{block_content}"
                     )
                 results.append({
                     'block_idx': block_idx,
@@ -196,8 +258,21 @@ class QAExtractionProcessor:
             
             # Process and save Q&A pairs
             processed_pairs = self.qa_extractor.process_qa_pairs(
-                qa_pairs, block, self.text_processor
+                qa_pairs, block_content, self.text_processor
             )
+            
+            # **重构改动**: 为每个Q&A对生成主题关键词（而不是使用文本块的anchor）
+            for pair in processed_pairs:
+                # 添加滑动上下文（如果启用）
+                if sliding_context:
+                    pair["sliding_context"] = sliding_context
+                
+                # **关键改动**: 为每个问答对生成主题，而不是使用文本块的anchor
+                if enable_llm_anchor:
+                    qa_topic = self._generate_qa_topic(pair["question"], pair["answer"])
+                    if qa_topic:
+                        pair["topic"] = qa_topic
+                        self.logger.debug(f"Generated topic for Q&A: {qa_topic}")
             
             # Save each Q&A pair
             for pair in processed_pairs:
@@ -211,7 +286,7 @@ class QAExtractionProcessor:
                         f"Successfully extracted Q&A pair #{success_count + i + 1} from block {block_idx + 1}:\n\n"
                         f"Question: {pair['question']}\n\n"
                         f"Answer: {pair['answer']}\n\n"
-                        f"Source block:\n{block}\n\n"
+                        f"Source block:\n{block_content}\n\n"
                         f"{'='*80}"
                     )
                     self.success_logger.info(success_log_content)
@@ -327,4 +402,91 @@ class QAExtractionProcessor:
             validation['valid'] = False
             validation['issues'].append(f"Cannot create output directory: {e}")
         
-        return validation 
+        return validation
+    
+    def _generate_qa_topic(self, question: str, answer: str) -> str:
+        """为问答对生成主题关键词"""
+        try:
+            # 组合问答对内容
+            qa_content = f"问题: {question}\n答案: {answer}"
+            
+            # 调用SmartBlockProcessor的LLM anchor生成方法，但用于问答对
+            anchor = self.smart_block_processor._generate_anchor_with_llm(qa_content)
+            
+            if anchor:
+                self.logger.debug(f"Generated topic for Q&A pair: {anchor}")
+                return anchor
+            else:
+                self.logger.warning("Failed to generate topic for Q&A pair")
+                return ""
+                
+        except Exception as e:
+            self.logger.error(f"Error generating topic for Q&A pair: {e}")
+            return ""
+    
+    def _log_token_monitoring_summary(self):
+        """在处理完成后输出token使用总结"""
+        if self.token_stats['total_blocks_processed'] == 0:
+            return
+        
+        stats = self.token_stats
+        avg_usage = sum(stats['token_usage']) / len(stats['token_usage']) if stats['token_usage'] else 0
+        
+        self.logger.info("📊 Token使用总结报告")
+        self.logger.info("=" * 50)
+        self.logger.info(f"🔢 处理块数: {stats['total_blocks_processed']}")
+        self.logger.info(f"📝 Prompt使用统计:")
+        self.logger.info(f"   精简版: {stats['prompt_uses']['compact']} 次")
+        self.logger.info(f"   完整版: {stats['prompt_uses']['full']} 次")
+        
+        if stats['token_usage']:
+            self.logger.info(f"🎯 Token使用统计:")
+            self.logger.info(f"   平均使用: {avg_usage:.0f} tokens")
+            self.logger.info(f"   最大使用: {stats['max_token_usage']} tokens")
+            self.logger.info(f"   最小使用: {stats['min_token_usage']} tokens")
+            
+            utilization = avg_usage / self.config.max_prompt_tokens * 100
+            self.logger.info(f"   平均利用率: {utilization:.1f}%")
+            
+            if utilization > 90:
+                self.logger.warning("⚠️ Token利用率过高，建议优化配置")
+            elif utilization > 75:
+                self.logger.info("🟡 Token利用率较高，建议监控")
+            else:
+                self.logger.info("🟢 Token利用率健康")
+        
+        if stats['truncations'] > 0:
+            self.logger.warning(f"⚠️ 发生 {stats['truncations']} 次文本截断")
+        else:
+            self.logger.info("✅ 无文本截断发生")
+        
+        self.logger.info("=" * 50)
+    
+    def _track_token_usage(self, prompt: str, block_anchor: str, sliding_context: str):
+        """记录token使用情况用于后续分析"""
+        try:
+            # 估算token使用
+            token_count = self.qa_extractor.estimate_token_count(prompt)
+            
+            # 更新统计
+            self.token_stats['token_usage'].append(token_count)
+            self.token_stats['max_token_usage'] = max(self.token_stats['max_token_usage'], token_count)
+            self.token_stats['min_token_usage'] = min(self.token_stats['min_token_usage'], token_count)
+            self.token_stats['total_blocks_processed'] += 1
+            
+            # 判断使用的prompt类型
+            if self.qa_extractor.compact_prompt in prompt:
+                self.token_stats['prompt_uses']['compact'] += 1
+            else:
+                self.token_stats['prompt_uses']['full'] += 1
+            
+            # 检查是否可能发生截断
+            if token_count > self.config.max_prompt_tokens:
+                self.token_stats['truncations'] += 1
+                self.logger.warning(f"⚠️ Potential truncation detected: {token_count} tokens > {self.config.max_prompt_tokens} limit")
+            
+            # 详细日志记录
+            self.logger.debug(f"Block token usage: {token_count}/{self.config.max_prompt_tokens} tokens ({token_count/self.config.max_prompt_tokens*100:.1f}%)")
+            
+        except Exception as e:
+            self.logger.error(f"Error tracking token usage: {e}")
