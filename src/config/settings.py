@@ -45,6 +45,10 @@ class Config:
     enable_success_log: bool = True
     enable_error_log: bool = True
     
+    # **🚀 PERFORMANCE OPTIMIZATION: Batch processing configuration**
+    batch_size: int = 5
+    max_workers: int = 3
+    
     def __post_init__(self):
         if self.known_prefixes is None:
             self.known_prefixes = [
@@ -90,6 +94,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
         'ANCHOR_KEYWORDS_COUNT': 'anchor_keywords_count',
         'ENABLE_QA_FILTER': 'enable_qa_filter',
         'LOG_LEVEL': 'log_level',
+        'BATCH_SIZE': 'batch_size',
+        'MAX_WORKERS': 'max_workers',
     }
     
     for env_var, config_attr in env_mappings.items():
@@ -98,7 +104,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
             # Type conversion
             if config_attr in ['temperature', 'extract_ratio', 'qa_allowance_ratio']:
                 env_value = float(env_value)
-            elif config_attr in ['max_block_size', 'min_block_size', 'anchor_keywords_count']:
+            elif config_attr in ['max_block_size', 'min_block_size', 'anchor_keywords_count', 'batch_size', 'max_workers']:
                 env_value = int(env_value)
             elif config_attr in ['enable_qa_filter', 'enable_sliding_context', 'enable_llm_anchor']:
                 env_value = env_value.lower() in ('true', '1', 'yes', 'on')
