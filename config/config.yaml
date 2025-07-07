@@ -14,7 +14,7 @@ pdf_filename: "uploaded.pdf"
 
 # 输出文件名 (必填)
 # 生成的 QA 对将保存到此文件，格式为 JSONL
-output_filename: "output_final_qa.jsonl"
+output_filename: "output_final_qa_test.jsonl"
 
 # 输出目录 (必填)
 # 所有输出文件（包括日志）将保存到此目录
@@ -39,18 +39,20 @@ temperature: 0.1
 # ==================== 文本处理配置 (Text Processing Configuration) ====================
 # 核心配置项 - 控制文本分块和处理策略
 
-# 最大块大小 (必填，默认: 1500)
+# 最大块大小 (必填，默认: 1200)
+# 🚀 优化后：减小块大小以提高处理速度，同时保持质量
 # 单个文本块的最大字符数，更大的块提供更多上下文但处理更慢
-max_block_size: 1500
+max_block_size: 1200
 
-# 最小块大小 (必填，默认: 200)
+# 最小块大小 (必填，默认: 150)
+# 🚀 优化后：适当减小最小块大小，避免丢失短但有价值的QA对
 # 单个文本块的最小字符数，小于此值的块将被丢弃
-min_block_size: 200
+min_block_size: 150
 
 # 提取比例 (必填，默认: 1.0)
 # 处理块的比例，范围 0.0-1.0
 # 建议：快速测试使用 0.1 (10%)，完整处理使用 1.0 (100%)
-extract_ratio: 1
+extract_ratio: 0.05
 
 # ==================== 智能分块配置 (Smart Block Processing) ====================
 # 高级配置项 - 智能文本分块功能
@@ -60,11 +62,12 @@ extract_ratio: 1
 qa_allowance_ratio: 1.1
 
 # 启用滑动上下文 (可选，默认: true)
+# 🚀 保持启用：滑动上下文对质量提升明显，性能影响很小
 # 在分块时保持上下文连续性，提高 QA 提取质量
 enable_sliding_context: true
 
 # 启用 LLM 锚点 (可选，默认: true)
-# 使用 LLM 生成主题锚点，提高分块准确性
+# 使用 LLM 生成主题锚点，提高分块准确性，但会增加处理时间
 enable_llm_anchor: true
 
 # 锚点关键词数量 (可选，默认: 2)
@@ -129,6 +132,25 @@ enable_success_log: true
 # 启用错误日志 (可选，默认: true)
 # 记录处理失败的详细信息，用于调试
 enable_error_log: true
+
+# ==================== 性能优化配置 (Performance Optimization) ====================
+# 批处理大小 (可选，默认: 5)
+# 设置说明：
+# batch_size = 1: 完全串行，最稳定，适合调试和对稳定性要求极高的场景
+# batch_size = 3-5: 适中并发，平衡性能和稳定性，推荐大多数场景
+# batch_size = 10+: 高并发，适合高性能服务器，需要充分测试
+# 
+# 重要：每个block的prompt长度不受batch_size影响！
+# 🚀 M2 Max优化：利用12核CPU优势，使用平衡并发模式
+batch_size: 4  # 🎯 针对M2 Max优化：适中并发，充分利用多核优势
+
+# 最大工作线程数 (可选，默认: 3)
+# 建议设置：
+# max_workers = 1: 严格串行，batch_size设为1时推荐
+# max_workers = 2-3: 适中并发，适合普通服务器
+# max_workers = 4+: 高并发，需要高性能Ollama服务器支持
+# 🚀 M2 Max优化：利用8个性能核心，设置为3-4个worker
+max_workers: 3  # 🎯 针对M2 Max：平衡并发，避免过载Ollama
 
 # =============================================================================
 # 环境变量支持 (Environment Variable Support)
