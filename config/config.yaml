@@ -42,17 +42,17 @@ temperature: 0.1
 # 最大块大小 (必填，默认: 1200)
 # 🚀 优化后：减小块大小以提高处理速度，同时保持质量
 # 单个文本块的最大字符数，更大的块提供更多上下文但处理更慢
-max_block_size: 1200
+max_block_size: 1500
 
 # 最小块大小 (必填，默认: 150)
 # 🚀 优化后：适当减小最小块大小，避免丢失短但有价值的QA对
 # 单个文本块的最小字符数，小于此值的块将被丢弃
-min_block_size: 150
+min_block_size: 200
 
 # 提取比例 (必填，默认: 1.0)
 # 处理块的比例，范围 0.0-1.0
 # 建议：快速测试使用 0.1 (10%)，完整处理使用 1.0 (100%)
-extract_ratio: 0.05
+extract_ratio: 0.04
 
 # ==================== 智能分块配置 (Smart Block Processing) ====================
 # 高级配置项 - 智能文本分块功能
@@ -141,16 +141,15 @@ enable_error_log: true
 # batch_size = 10+: 高并发，适合高性能服务器，需要充分测试
 # 
 # 重要：每个block的prompt长度不受batch_size影响！
-# 🚀 M2 Max优化：利用12核CPU优势，使用平衡并发模式
-batch_size: 4  # 🎯 针对M2 Max优化：适中并发，充分利用多核优势
+
+batch_size: 4  # 🎯 
 
 # 最大工作线程数 (可选，默认: 3)
 # 建议设置：
 # max_workers = 1: 严格串行，batch_size设为1时推荐
 # max_workers = 2-3: 适中并发，适合普通服务器
 # max_workers = 4+: 高并发，需要高性能Ollama服务器支持
-# 🚀 M2 Max优化：利用8个性能核心，设置为3-4个worker
-max_workers: 3  # 🎯 针对M2 Max：平衡并发，避免过载Ollama
+max_workers: 3  # 🎯 
 
 # =============================================================================
 # 环境变量支持 (Environment Variable Support)
