@@ -251,7 +251,7 @@ def validate_setup(processor: QAExtractionProcessor) -> bool:
         return False
 
 
-def print_results(results: dict) -> None:
+def print_results(results: dict, processor=None) -> None:
     """Print processing results in a formatted way."""
     if not results['success']:
         print(f"❌ Processing failed: {results['message']}")
@@ -259,34 +259,64 @@ def print_results(results: dict) -> None:
     
     stats = results['stats']
     
-    print("\n" + "="*50)
-    print("📊 PROCESSING RESULTS")
-    print("="*50)
-    
-    print(f"📁 Output file: {results['output_path']}")
-    print(f"📄 PDF pages: {stats['pdf_pages']}")
-    print(f"📦 Total blocks: {stats['total_blocks']}")
-    print(f"✅ Successful blocks: {stats['successful_blocks']}")
-    print(f"❌ Failed blocks: {stats['failed_blocks']}")
-    print(f"📈 Success rate: {stats['success_rate']:.1%}")
-    print(f"🎯 Q&A pairs extracted: {stats['qa_pairs_extracted']}")
-    print(f"📊 Average Q&A per block: {stats['avg_qa_per_block']:.1f}")
+    # Format the results for both console and log
+    result_lines = [
+        "="*50,
+        "📊 PROCESSING RESULTS",
+        "="*50,
+        f"📁 Output file: {results['output_path']}",
+        f"📄 PDF pages: {stats['pdf_pages']}",
+        f"📦 Total blocks: {stats['total_blocks']}",
+        f"✅ Successful blocks: {stats['successful_blocks']}",
+        f"❌ Failed blocks: {stats['failed_blocks']}",
+        f"📈 Success rate: {stats['success_rate']:.1%}",
+        f"🎯 Q&A pairs extracted: {stats['qa_pairs_extracted']}",
+        f"📊 Average Q&A per block: {stats['avg_qa_per_block']:.1f}"
+    ]
     
     if stats['quality_metrics']:
         qm = stats['quality_metrics']
-        print(f"\n📏 QUALITY METRICS")
-        print(f"Question length: {qm['avg_question_length']:.1f} chars (avg)")
-        print(f"Answer length: {qm['avg_answer_length']:.1f} chars (avg)")
+        result_lines.extend([
+            "",
+            "📏 QUALITY METRICS",
+            f"Question length: {qm['avg_question_length']:.1f} chars (avg)",
+            f"Answer length: {qm['avg_answer_length']:.1f} chars (avg)"
+        ])
     
-    print(f"\n⚙️ CONFIGURATION USED")
+    result_lines.extend([
+        "",
+        "⚙️ CONFIGURATION USED"
+    ])
+    
     config_used = stats['config_used']
-    print(f"Model: {config_used['model_name']}")
-    print(f"Block size: {config_used['min_block_size']}-{config_used['max_block_size']} chars")
-    print(f"Extract ratio: {config_used['extract_ratio']:.1%}")
-    print(f"QA filter: {'Enabled' if config_used['enable_qa_filter'] else 'Disabled'}")
-    print(f"Temperature: {config_used['temperature']}")
+    result_lines.extend([
+        f"Model: {config_used['model_name']}",
+        f"Block size: {config_used['min_block_size']}-{config_used['max_block_size']} chars",
+        f"Extract ratio: {config_used['extract_ratio']:.1%}",
+        f"QA filter: {'Enabled' if config_used['enable_qa_filter'] else 'Disabled'}",
+        f"Temperature: {config_used['temperature']}",
+        "="*50
+    ])
     
-    print("="*50)
+    # Print to console
+    for line in result_lines:
+        print(line)
+    
+    # Also log to file if we have access to the processor's logger
+    if processor and hasattr(processor, 'logger'):
+        for line in result_lines:
+            processor.logger.info(line)
+    else:
+        # Fallback to getting logger by name
+        try:
+            import logging
+            logger = logging.getLogger('qa_extractor')
+            if logger.handlers:  # Only log if logger is configured
+                for line in result_lines:
+                    logger.info(line)
+        except Exception:
+            # If logging fails, just continue with console output
+            pass
 
 
 def main():
@@ -337,7 +367,7 @@ def main():
     try:
         print(f"🚀 Starting Q&A extraction from: {pdf_file_to_process}")
         results = processor.process_pdf(pdf_file_to_process)
-        print_results(results)
+        print_results(results, processor)
         
         if results['success']:
             print("🎉 Processing completed successfully!")

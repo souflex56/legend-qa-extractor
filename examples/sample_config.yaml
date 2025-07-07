@@ -1,46 +1,99 @@
-# Sample Configuration for Legend QA Extractor
-# Copy this file and modify it according to your needs
+# =============================================================================
+# Legend QA Extractor 示例配置文件
+# =============================================================================
+# 复制此文件并根据需要修改配置项
+# 支持环境变量覆盖，格式：export CONFIG_NAME=value
+# =============================================================================
 
-# ==================== File Configuration ====================
-# PDF file to process (can be absolute or relative path)
+# ==================== 文件配置 (File Configuration) ====================
+# 必填配置项 - 输入输出文件路径
+
+# PDF 文件路径 (必填)
+# 支持绝对路径或相对路径，默认为当前目录下的 sample_document.pdf
 pdf_filename: "sample_document.pdf"
 
-# Output file name for extracted Q&A pairs
+# 输出文件名 (必填)
+# 生成的 QA 对将保存到此文件，格式为 JSONL
 output_filename: "extracted_qa_pairs.jsonl"
 
-# Output directory for results and logs
+# 输出目录 (必填)
+# 所有输出文件（包括日志）将保存到此目录
 output_dir: "results"
 
-# ==================== Model Configuration ====================
-# Ollama model name to use for Q&A extraction
-# Popular choices: qwen2.5:7b-instruct, qwen2.5:14b-instruct, llama2:13b-chat
+# ==================== 模型配置 (Model Configuration) ====================
+# 必填配置项 - LLM 模型和连接设置
+
+# Ollama 模型名称 (必填)
+# 推荐模型：qwen2.5:7b-instruct, qwen2.5:14b-instruct, llama2:13b-chat
 model_name: "qwen2.5:7b-instruct"
 
-# Ollama server host (change if running Ollama on different machine)
+# Ollama 服务器地址 (必填)
+# 如果 Ollama 运行在其他机器上，请修改此地址
 ollama_host: "http://localhost:11434"
 
-# Model temperature for response generation (0.0 to 1.0)
-# 0.0 = most consistent, 1.0 = most creative
+# 模型温度参数 (可选，默认: 0.1)
+# 控制输出的随机性：0.0 = 最一致，1.0 = 最创造性
+# 建议范围：0.0 - 0.3
 temperature: 0.1
 
-# ==================== Text Processing Configuration ====================
-# Maximum block size in characters (larger = more context, slower processing)
+# ==================== 文本处理配置 (Text Processing Configuration) ====================
+# 核心配置项 - 控制文本分块和处理策略
+
+# 最大块大小 (必填，默认: 1500)
+# 单个文本块的最大字符数，更大的块提供更多上下文但处理更慢
 max_block_size: 1500
 
-# Minimum block size in characters (smaller blocks are discarded)
-min_block_size: 100
+# 最小块大小 (必填，默认: 200)
+# 单个文本块的最小字符数，小于此值的块将被丢弃
+min_block_size: 200
 
-# Extract ratio (0.0 to 1.0) - fraction of blocks to process
-# Use 0.1 for quick testing with 10% of blocks
-extract_ratio: 1.0
+# 提取比例 (必填，默认: 1.0)
+# 处理块的比例，范围 0.0-1.0
+# 建议：快速测试使用 0.1 (10%)，完整处理使用 1.0 (100%)
+extract_ratio: 0.1
 
-# ==================== Q&A Filtering Configuration ====================
-# Enable Q&A filtering (only process blocks with Q&A patterns)
-# Set to true for faster processing when you know document has clear Q&A structure
+# ==================== 智能分块配置 (Smart Block Processing) ====================
+# 高级配置项 - 智能文本分块功能
+
+# QA 容错比例 (可选，默认: 1.1)
+# 允许的 QA 对数量超出预期比例，用于处理复杂文档
+qa_allowance_ratio: 1.1
+
+# 启用滑动上下文 (可选，默认: false)
+# 在分块时保持上下文连续性，提高 QA 提取质量
+enable_sliding_context: false
+
+# 启用 LLM 锚点 (可选，默认: false)
+# 使用 LLM 生成主题锚点，提高分块准确性
+enable_llm_anchor: false
+
+# 锚点关键词数量 (可选，默认: 2)
+# 每个文本块生成的主题锚点数量
+anchor_keywords_count: 2
+
+# ==================== Token 管理配置 (Token Management) ====================
+# 性能配置项 - 控制 Token 使用和性能优化
+
+# 最大 Prompt Token 数 (必填，默认: 6000)
+# 单个请求的最大 Token 数量，影响处理速度和成本
+max_prompt_tokens: 6000
+
+# 启用 Token 监控 (可选，默认: true)
+# 自动监控和报告 Token 使用情况，帮助优化配置
+enable_token_monitoring: true
+
+# ==================== QA 过滤配置 (QA Filtering Configuration) ====================
+# 可选配置项 - 提高处理效率
+
+# 启用 QA 过滤 (可选，默认: false)
+# 只处理包含 QA 模式的文本块，提高处理速度
+# 建议：当文档有明确的问答结构时启用
 enable_qa_filter: false
 
-# Known prefixes for question identification (add your own if needed)
+# 已知问题前缀 (可选)
+# 用于识别问题的关键词前缀，支持自定义添加
 known_prefixes:
+  # 中文常见前缀
   - "网友"
   - "记者"
   - "问"
@@ -52,13 +105,38 @@ known_prefixes:
   - "评论"
   - "主持"
   - "用户"
-  - "面试官"  # Added for interview documents
-  - "嘉宾"    # Added for guest interviews
+  # 面试场景前缀
+  - "面试官"
+  - "嘉宾"
+  # 英文前缀
+  - "Q:"
+  - "Question:"
+  - "Interviewer:"
+  - "Host:"
 
-# ==================== Logging Configuration ====================
-# Log level options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+# ==================== 日志配置 (Logging Configuration) ====================
+# 调试配置项 - 控制日志输出
+
+# 日志级别 (可选，默认: INFO)
+# 选项：DEBUG, INFO, WARNING, ERROR, CRITICAL
+# DEBUG: 详细调试信息，INFO: 一般信息，WARNING: 警告，ERROR: 错误
 log_level: "INFO"
 
-# Enable detailed logging (useful for debugging)
+# 启用成功日志 (可选，默认: true)
+# 记录成功提取的 QA 对详细信息
 enable_success_log: true
-enable_error_log: true 
+
+# 启用错误日志 (可选，默认: true)
+# 记录处理失败的详细信息，用于调试
+enable_error_log: true
+
+# =============================================================================
+# 环境变量支持 (Environment Variable Support)
+# =============================================================================
+# 以下配置项可通过环境变量覆盖：
+# PDF_FILENAME, OUTPUT_FILENAME, OUTPUT_DIR
+# OLLAMA_MODEL, OLLAMA_HOST, MODEL_TEMPERATURE
+# MAX_BLOCK_SIZE, MIN_BLOCK_SIZE, EXTRACT_RATIO
+# QA_ALLOWANCE_RATIO, ENABLE_SLIDING_CONTEXT, ENABLE_LLM_ANCHOR
+# ANCHOR_KEYWORDS_COUNT, ENABLE_QA_FILTER, LOG_LEVEL
+# ============================================================================= 
