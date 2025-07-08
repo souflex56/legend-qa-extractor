@@ -14,7 +14,7 @@ pdf_filename: "uploaded.pdf"
 
 # 输出文件名 (必填)
 # 生成的 QA 对将保存到此文件，格式为 JSONL
-output_filename: "output_final_qa_test.jsonl"
+output_filename: "output_final_qa_1500.jsonl"
 
 # 输出目录 (必填)
 # 所有输出文件（包括日志）将保存到此目录
@@ -52,7 +52,7 @@ min_block_size: 200
 # 提取比例 (必填，默认: 1.0)
 # 处理块的比例，范围 0.0-1.0
 # 建议：快速测试使用 0.1 (10%)，完整处理使用 1.0 (100%)
-extract_ratio: 0.04
+extract_ratio: 1
 
 # ==================== 智能分块配置 (Smart Block Processing) ====================
 # 高级配置项 - 智能文本分块功能
@@ -70,7 +70,7 @@ enable_sliding_context: true
 # 使用 LLM 生成主题锚点，提高分块准确性，但会增加处理时间
 enable_llm_anchor: true
 
-# 锚点关键词数量 (可选，默认: 2)
+# 锚点关键词数量 (可选，默认: 3)
 # 每个文本块生成的主题锚点数量
 anchor_keywords_count: 3
 
