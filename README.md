@@ -5,6 +5,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/souflex56/legend-qa-extractor)
 
 **基于本地大模型的专业PDF问答对提取工具**
 
