@@ -2,8 +2,10 @@
 
 import json
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import logging
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 logger = logging.getLogger(__name__)
 
@@ -11,9 +13,21 @@ logger = logging.getLogger(__name__)
 class QAExtractor:
     """Handles extraction and processing of Q&A pairs from LLM responses."""
     
-    def __init__(self, max_prompt_tokens: int = 6000):
+    def __init__(self, max_prompt_tokens: int = 6000, config: Optional[Dict] = None):
         self.logger = logger
         self.max_prompt_tokens = max_prompt_tokens  # 留一些余量给模型
+        self.config = config or {}
+        
+        # 长答案处理配置
+        long_answer_config = self.config.get('long_answer_processing', {})
+        self.chain_summary_threshold = long_answer_config.get('chain_summary_threshold', 3000)
+        self.summary_length = long_answer_config.get('summary_length', 50)
+        self.entailment_threshold = long_answer_config.get('entailment_threshold', 0.7)
+        
+        # 初始化NLI模型（延迟加载）
+        self.nli_model = None
+        self.nli_tokenizer = None
+        self.nli_model_path = long_answer_config.get('nli_model_path', 'MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7')
         
         # 精简版基础prompt，保留核心功能但大幅缩短
         self.compact_prompt = """你是中文问答对提取专家，从原文提取段永平的所有真实问答对。
@@ -368,4 +382,302 @@ class QAExtractor:
         
         metrics['quality_score'] = score
         
-        return metrics 
+        return metrics
+    
+    def _load_nli_model(self):
+        """延迟加载NLI模型，只在需要时加载"""
+        if self.nli_model is None:
+            self.logger.info(f"Loading NLI model: {self.nli_model_path}")
+            try:
+                self.nli_tokenizer = AutoTokenizer.from_pretrained(self.nli_model_path)
+                self.nli_model = AutoModelForSequenceClassification.from_pretrained(self.nli_model_path)
+                self.nli_model.eval()
+                self.logger.info("NLI model loaded successfully")
+            except Exception as e:
+                self.logger.error(f"Failed to load NLI model: {e}")
+                raise
+    
+    def _check_entailment(self, premise: str, hypothesis: str) -> Tuple[bool, float]:
+        """
+        蕴含校验：检查假设(hypothesis)是否被前提(premise)所蕴含
+        返回：(是否蕴含, 蕴含分数)
+        """
+        self._load_nli_model()
+        
+        try:
+            # 准备输入
+            inputs = self.nli_tokenizer(
+                premise, 
+                hypothesis, 
+                truncation=True, 
+                padding=True, 
+                max_length=512,
+                return_tensors="pt"
+            )
+            
+            # 推理
+            with torch.no_grad():
+                outputs = self.nli_model(**inputs)
+                logits = outputs.logits
+                
+                # 获取概率分布
+                probabilities = torch.softmax(logits, dim=-1)
+                
+                # mDeBERTa-v3-base-xnli 的标签映射：
+                # 0: entailment, 1: neutral, 2: contradiction
+                entailment_score = probabilities[0][0].item()
+                
+            is_entailed = entailment_score >= self.entailment_threshold
+            
+            self.logger.debug(f"Entailment check - Score: {entailment_score:.3f}, Threshold: {self.entailment_threshold}")
+            
+            return is_entailed, entailment_score
+            
+        except Exception as e:
+            self.logger.error(f"Error in entailment check: {e}")
+            # 出错时返回保守结果
+            return False, 0.0
+    
+    def _generate_summary_with_llm(self, text: str, llm_client) -> str:
+        """使用LLM生成文本摘要"""
+        prompt = f"""请将以下内容总结为{self.summary_length}字以内的摘要，保留核心信息：
+
+{text[:2000]}  # 限制输入长度
+
+摘要："""
+        
+        try:
+            summary = llm_client.call_ollama(prompt, temperature=0.1)
+            if summary:
+                # 清理摘要
+                summary = summary.strip().replace("摘要：", "").replace("总结：", "").strip()
+                # 确保不超过指定长度
+                if len(summary) > self.summary_length:
+                    summary = summary[:self.summary_length-3] + "..."
+                return summary
+            else:
+                return ""
+        except Exception as e:
+            self.logger.error(f"Error generating summary: {e}")
+            return ""
+    
+    def _extract_key_sentences(self, text: str, num_sentences: int = 3) -> str:
+        """抽取式摘要：提取关键句子作为备用方案"""
+        # 按句子分割
+        sentences = re.split(r'(?<=[。！？；])\s*', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        
+        if len(sentences) <= num_sentences:
+            return " ".join(sentences)
+        
+        # 简单策略：取开头、中间和结尾的句子
+        key_sentences = []
+        key_sentences.append(sentences[0])  # 开头
+        
+        if num_sentences > 1:
+            mid_idx = len(sentences) // 2
+            key_sentences.append(sentences[mid_idx])  # 中间
+        
+        if num_sentences > 2:
+            key_sentences.append(sentences[-1])  # 结尾
+        
+        return " ".join(key_sentences)
+    
+    def _process_long_answer(self, answer_text: str, llm_client) -> str:
+        """
+        处理超长答案：链式摘要 + 蕴含校验
+        """
+        if len(answer_text) <= self.chain_summary_threshold:
+            return answer_text
+        
+        self.logger.info(f"Processing long answer ({len(answer_text)} chars) with chain summarization")
+        
+        # 将长答案分成多个片段
+        chunk_size = self.chain_summary_threshold
+        chunks = []
+        
+        for i in range(0, len(answer_text), chunk_size):
+            chunk = answer_text[i:i + chunk_size]
+            chunks.append(chunk)
+        
+        self.logger.debug(f"Split long answer into {len(chunks)} chunks")
+        
+        # 对每个片段生成摘要并进行蕴含校验
+        processed_parts = []
+        
+        for i, chunk in enumerate(chunks):
+            # 生成摘要
+            summary = self._generate_summary_with_llm(chunk, llm_client)
+            
+            if summary and i < len(chunks) - 1:  # 不是最后一个片段
+                # 进行蕴含校验
+                next_chunk_preview = chunks[i + 1][:500]  # 下一个片段的预览
+                is_entailed, score = self._check_entailment(
+                    premise=next_chunk_preview,
+                    hypothesis=summary
+                )
+                
+                if not is_entailed:
+                    self.logger.warning(f"Chunk {i} summary failed entailment check (score: {score:.3f})")
+                    # 使用抽取式摘要作为备用
+                    summary = self._extract_key_sentences(chunk, num_sentences=3)
+                else:
+                    self.logger.debug(f"Chunk {i} summary passed entailment check (score: {score:.3f})")
+            
+            # 如果是最后一个片段，保留更多原始内容
+            if i == len(chunks) - 1:
+                # 最后一个片段可能包含结论，保留更多内容
+                if len(chunk) > 1000:
+                    summary = self._generate_summary_with_llm(chunk[:1000], llm_client) + "\n\n" + chunk[-500:]
+                else:
+                    summary = chunk
+            
+            if summary:
+                processed_parts.append(summary)
+        
+        # 合并处理后的部分
+        final_answer = "\n\n".join(processed_parts)
+        
+        self.logger.info(f"Long answer processing completed: {len(answer_text)} -> {len(final_answer)} chars")
+        
+        return final_answer
+    
+    def process_groups(self, groups: List[Dict[str, Any]], llm_client) -> List[Dict[str, Any]]:
+        """
+        处理语义分组后的块，支持长答案处理
+        
+        Args:
+            groups: 语义分组后的块列表
+            llm_client: LLM客户端实例
+            
+        Returns:
+            处理后的QA对列表
+        """
+        all_qa_pairs = []
+        
+        for group_idx, group in enumerate(groups):
+            try:
+                group_content = group['content']
+                confidence = group.get('confidence', 'unknown')
+                
+                # 根据置信度决定处理策略
+                if confidence == 'high':
+                    # 高置信度块，直接提取
+                    self.logger.debug(f"Processing high confidence group {group_idx}")
+                    qa_pairs = self._extract_from_high_confidence_block(group_content)
+                else:
+                    # 中低置信度块，使用LLM提取
+                    self.logger.debug(f"Processing {confidence} confidence group {group_idx}")
+                    qa_pairs = self._extract_with_llm(group_content, llm_client)
+                
+                # 处理长答案
+                for pair in qa_pairs:
+                    if len(pair.get('answer', '')) > self.chain_summary_threshold:
+                        original_answer = pair['answer']
+                        processed_answer = self._process_long_answer(original_answer, llm_client)
+                        pair['answer'] = processed_answer
+                        pair['original_answer_length'] = len(original_answer)
+                        pair['processed_answer_length'] = len(processed_answer)
+                        self.logger.info(f"Processed long answer: {len(original_answer)} -> {len(processed_answer)} chars")
+                
+                # 添加元数据
+                for pair in qa_pairs:
+                    pair['source_confidence'] = confidence
+                    pair['source_type'] = group.get('type', 'unknown')
+                    pair['domain'] = group.get('domain', 'general')
+                
+                all_qa_pairs.extend(qa_pairs)
+                
+            except Exception as e:
+                self.logger.error(f"Error processing group {group_idx}: {e}")
+                continue
+        
+        return all_qa_pairs
+    
+    def _extract_from_high_confidence_block(self, content: str) -> List[Dict[str, Any]]:
+        """从高置信度块中提取问答对（基于规则）"""
+        qa_pairs = []
+        
+        # 简单的基于模式的提取
+        lines = content.split('\n')
+        current_question = None
+        current_answer_lines = []
+        
+        question_patterns = [
+            r"^网友[：:](.+)$",
+            r"^记者[：:](.+)$",
+            r"^问[：:](.+)$",
+            r"^提问[：:](.+)$",
+            r"^Q[：:](.+)$"
+        ]
+        
+        answer_patterns = [
+            r"^段永平[：:](.+)$",
+            r"^段[：:](.+)$",
+            r"^答[：:](.+)$",
+            r"^A[：:](.+)$"
+        ]
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 检查是否是问题
+            question_match = None
+            for pattern in question_patterns:
+                match = re.match(pattern, line)
+                if match:
+                    question_match = match.group(1).strip()
+                    break
+            
+            if question_match:
+                # 保存之前的问答对
+                if current_question and current_answer_lines:
+                    qa_pairs.append({
+                        'question': current_question,
+                        'answer': '\n'.join(current_answer_lines)
+                    })
+                
+                current_question = question_match
+                current_answer_lines = []
+                continue
+            
+            # 检查是否是答案开始
+            answer_match = None
+            for pattern in answer_patterns:
+                match = re.match(pattern, line)
+                if match:
+                    answer_match = match.group(1).strip()
+                    break
+            
+            if answer_match and current_question:
+                current_answer_lines.append(answer_match)
+            elif current_question and current_answer_lines:
+                # 继续收集答案内容
+                current_answer_lines.append(line)
+        
+        # 保存最后的问答对
+        if current_question and current_answer_lines:
+            qa_pairs.append({
+                'question': current_question,
+                'answer': '\n'.join(current_answer_lines)
+            })
+        
+        return qa_pairs
+    
+    def _extract_with_llm(self, content: str, llm_client) -> List[Dict[str, Any]]:
+        """使用LLM提取问答对"""
+        # 创建prompt
+        prompt = self.create_prompt(content)
+        
+        # 调用LLM
+        response = llm_client.call_ollama(prompt, temperature=0.1)
+        
+        if not response:
+            return []
+        
+        # 提取JSON
+        qa_pairs = self.extract_json(response)
+        
+        return qa_pairs 

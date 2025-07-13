@@ -26,11 +26,15 @@ class Config:
     min_block_size: int = 200
     extract_ratio: float = 1.0
     
-    # Smart block processing (V1)
-    qa_allowance_ratio: float = 1.1
-    enable_sliding_context: bool = False
+    # Semantic grouping configuration
+    semantic_grouping: dict = None
+    
+    # Long answer processing configuration
+    long_answer_processing: dict = None
+    
+    # LLM anchor for Q&A pairs
     enable_llm_anchor: bool = False
-    anchor_keywords_count: int = 2
+    anchor_keywords_count: int = 3
     
     # Token management configuration
     max_prompt_tokens: int = 6000
@@ -38,6 +42,7 @@ class Config:
     
     # QA filtering
     enable_qa_filter: bool = True
+    skip_low_confidence: bool = False
     known_prefixes: List[str] = None
     
     # Logging
@@ -55,6 +60,27 @@ class Config:
                 "网友", "记者", "问", "提问者", "主持人", 
                 "文章引用", "Q", "观众", "评论", "主持", "用户"
             ]
+        
+        # Set default semantic grouping configuration
+        if self.semantic_grouping is None:
+            self.semantic_grouping = {
+                'max_question_length': 50,
+                'default_similarity_threshold': 0.65,
+                'std_factor': 0.5
+            }
+        
+        # Set default long answer processing configuration
+        if self.long_answer_processing is None:
+            self.long_answer_processing = {
+                'chain_summary_threshold': 3000,
+                'summary_length': 50,
+                'nli_model_path': 'MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7',
+                'entailment_threshold': 0.7
+            }
+    
+    def to_dict(self) -> dict:
+        """Convert config to dictionary."""
+        return asdict(self)
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -88,8 +114,6 @@ def load_config(config_path: Optional[str] = None) -> Config:
         'MAX_BLOCK_SIZE': 'max_block_size',
         'MIN_BLOCK_SIZE': 'min_block_size',
         'EXTRACT_RATIO': 'extract_ratio',
-        'QA_ALLOWANCE_RATIO': 'qa_allowance_ratio',
-        'ENABLE_SLIDING_CONTEXT': 'enable_sliding_context',
         'ENABLE_LLM_ANCHOR': 'enable_llm_anchor',
         'ANCHOR_KEYWORDS_COUNT': 'anchor_keywords_count',
         'ENABLE_QA_FILTER': 'enable_qa_filter',

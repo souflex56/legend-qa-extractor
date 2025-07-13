@@ -14,7 +14,7 @@ pdf_filename: "uploaded.pdf"
 
 # 输出文件名 (必填)
 # 生成的 QA 对将保存到此文件，格式为 JSONL
-output_filename: "output_final_qa_1500.jsonl"
+output_filename: "output_final_qa_chunkwise_0.02.jsonl"
 
 # 输出目录 (必填)
 # 所有输出文件（包括日志）将保存到此目录
@@ -52,26 +52,51 @@ min_block_size: 200
 # 提取比例 (必填，默认: 1.0)
 # 处理块的比例，范围 0.0-1.0
 # 建议：快速测试使用 0.1 (10%)，完整处理使用 1.0 (100%)
-extract_ratio: 1
+extract_ratio: 0.05
 
-# ==================== 智能分块配置 (Smart Block Processing) ====================
-# 高级配置项 - 智能文本分块功能
+# ==================== 语义分组配置 (Semantic Grouping) ====================
+# 高级配置项 - 智能语义分组功能
 
-# QA 容错比例 (可选，默认: 1.1)
-# 允许的 QA 对数量超出预期比例，用于处理复杂文档
-qa_allowance_ratio: 1.1
+# 语义分组配置
+semantic_grouping:
+  # 最大问题长度 (可选，默认: 50)
+  # 超过此长度的段落不会被识别为潜在问题
+  max_question_length: 50
+  
+  # 默认相似度阈值 (可选，默认: 0.65)
+  # 当无法计算动态阈值时使用的默认值
+  default_similarity_threshold: 0.65
+  
+  # 标准差系数 (可选，默认: 0.5)
+  # 用于动态阈值计算：threshold = avg - std_factor * std
+  std_factor: 0.5
 
-# 启用滑动上下文 (可选，默认: true)
-# 🚀 保持启用：滑动上下文对质量提升明显，性能影响很小
-# 在分块时保持上下文连续性，提高 QA 提取质量
-enable_sliding_context: true
+# ==================== 长答案处理配置 (Long Answer Processing) ====================
+# 高级配置项 - 链式摘要与风险控制
+
+long_answer_processing:
+  # 链式摘要阈值 (可选，默认: 3000)
+  # 超过此长度的答案将启动链式摘要
+  chain_summary_threshold: 3000
+  
+  # 摘要长度 (可选，默认: 50)
+  # 每个片段的摘要字数限制
+  summary_length: 50
+  
+  # NLI模型路径 (可选)
+  # 用于蕴含校验的模型，支持多语言
+  nli_model_path: "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
+  
+  # 蕴含阈值 (可选，默认: 0.7)
+  # 蕴含分数低于此值时将使用备用摘要策略
+  entailment_threshold: 0.7
 
 # 启用 LLM 锚点 (可选，默认: true)
-# 使用 LLM 生成主题锚点，提高分块准确性，但会增加处理时间
+# 为问答对生成主题关键词，提高检索质量
 enable_llm_anchor: true
 
 # 锚点关键词数量 (可选，默认: 3)
-# 每个文本块生成的主题锚点数量
+# 每个问答对生成的主题关键词数量
 anchor_keywords_count: 3
 
 # ==================== Token 管理配置 (Token Management) ====================
@@ -92,6 +117,11 @@ enable_token_monitoring: true
 # 只处理包含 QA 模式的文本块，提高处理速度
 # 建议：当文档有明确的问答结构时启用
 enable_qa_filter: false
+
+# 跳过低置信度块 (可选，默认: false)
+# 当启用时，低置信度块将被跳过以提高处理效率
+# 建议：对于质量要求较高的场景可以启用
+skip_low_confidence: false
 
 # 已知问题前缀 (可选)
 # 用于识别问题的关键词前缀，支持自定义添加
@@ -123,7 +153,7 @@ known_prefixes:
 # 日志级别 (可选，默认: INFO)
 # 选项：DEBUG, INFO, WARNING, ERROR, CRITICAL
 # DEBUG: 详细调试信息，INFO: 一般信息，WARNING: 警告，ERROR: 错误
-log_level: "INFO"
+log_level: "DEBUG"
 
 # 启用成功日志 (可选，默认: true)
 # 记录成功提取的 QA 对详细信息

@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from .config import Config
 from .core import PDFProcessor, TextProcessor, QAExtractor, LLMClient
-from .core.smart_block_processor import SmartBlockProcessor
+from .core.semantic_grouper import SemanticGrouper
 from .utils import setup_logger, setup_extraction_loggers, save_single_jsonl_item, ensure_dir
 
 
@@ -40,7 +40,7 @@ class QAExtractionProcessor:
         # Initialize processors
         self.pdf_processor = PDFProcessor()
         self.text_processor = TextProcessor(known_prefixes=config.known_prefixes)
-        self.qa_extractor = QAExtractor(max_prompt_tokens=config.max_prompt_tokens)
+        self.qa_extractor = QAExtractor(max_prompt_tokens=config.max_prompt_tokens, config=config.to_dict())
         
         # Initialize LLM client
         try:
@@ -52,16 +52,8 @@ class QAExtractionProcessor:
             self.logger.error(f"Failed to initialize LLM client: {e}")
             raise
         
-        # SmartBlockProcessor with enhanced features
-        self.smart_block_processor = SmartBlockProcessor(
-            text_processor=self.text_processor,
-            llm_client=self.llm_client,
-            min_block_size=config.min_block_size,
-            max_block_size=config.max_block_size,
-            enable_sliding_context=config.enable_sliding_context,
-            enable_llm_anchor=config.enable_llm_anchor,
-            anchor_keywords_count=config.anchor_keywords_count
-        )
+        # Initialize Semantic Grouper
+        self.semantic_grouper = SemanticGrouper(config.to_dict())
         
         # **🚀 PERFORMANCE: Batch processing configuration**
         self.batch_size = getattr(config, 'batch_size', 5)  # Default batch size
@@ -114,22 +106,18 @@ class QAExtractionProcessor:
         self.logger.info(f"📊 PDF info: {pdf_info.get('page_count', 'unknown')} pages")
         
         # Process text and create blocks
-        self.logger.info("✂️ Starting text block generation using SmartBlockProcessor...")
+        self.logger.info("✂️ Starting semantic grouping...")
         
         # 预处理文本
         preprocessed_text = self.text_processor.preprocess_qa_text(raw_text)
         
-        # **重构改动**: 调用新的智能分块器，但暂时不生成LLM anchor
-        # 临时禁用LLM anchor功能，稍后为问答对生成主题
-        original_enable_llm_anchor = self.smart_block_processor.enable_llm_anchor
-        self.smart_block_processor.enable_llm_anchor = False
+        # 分割成段落
+        paragraphs = [p.strip() for p in preprocessed_text.split('\n') if p.strip()]
         
-        processed_blocks_data = self.smart_block_processor.process_document_into_blocks(preprocessed_text)
+        # 使用新的语义分组器
+        processed_blocks_data = self.semantic_grouper.group(paragraphs)
         
-        # 恢复原始设置
-        self.smart_block_processor.enable_llm_anchor = original_enable_llm_anchor
-        
-        self.logger.info(f"✅ Generated {len(processed_blocks_data)} smart text blocks for LLM processing.")
+        self.logger.info(f"✅ Generated {len(processed_blocks_data)} semantic blocks for LLM processing.")
         
         # --- BEGIN: Added for block size inspection ---
         self.logger.info("🔍 Individual Block Sizes:")
@@ -173,12 +161,21 @@ class QAExtractionProcessor:
         
         # Process blocks and extract Q&A pairs
         self.logger.info(f"🤖 Processing {len(processed_blocks_data)} blocks with LLM...")
-        results = self._process_blocks(processed_blocks_data, output_path, original_enable_llm_anchor)
+        results = self._process_blocks(processed_blocks_data, output_path, self.config.enable_llm_anchor)
         
-        # Generate final statistics
+        # Generate final statistics with confidence analysis
         stats = self._generate_statistics(results, pdf_info, len(processed_blocks_data))
         
+        # Add confidence-based processing statistics
+        confidence_stats = self._analyze_confidence_processing(results, processed_blocks_data)
+        stats.update(confidence_stats)
+        
         self.logger.info(f"🎉 Processing completed! Extracted {stats['qa_pairs_extracted']} Q&A pairs")
+        self.logger.info(f"📊 Confidence-based processing stats:")
+        self.logger.info(f"   - High confidence blocks: {confidence_stats.get('high_confidence_blocks', 0)} (rule-based)")
+        self.logger.info(f"   - Medium confidence blocks: {confidence_stats.get('medium_confidence_blocks', 0)} (LLM conservative)")
+        self.logger.info(f"   - Low confidence blocks: {confidence_stats.get('low_confidence_blocks', 0)} (LLM permissive)")
+        self.logger.info(f"   - Skipped blocks: {confidence_stats.get('skipped_blocks', 0)}")
         self.logger.info(f"📁 Output saved to: {output_path}")
         
         # 输出token监控总结（如果启用）
@@ -343,65 +340,137 @@ class QAExtractionProcessor:
         try:
             # Extract block content and metadata
             block_content = block_data["content"]
-            block_anchor = block_data.get("anchor", "")
-            sliding_context = block_data.get("sliding_context", "")
+            # 新的语义分组器提供的元数据
+            confidence = block_data.get("confidence", "unknown")
+            block_type = block_data.get("type", "unknown")
+            domain = block_data.get("domain", "general")
+            
+            # 暂时不使用sliding_context，因为新架构中的语义关联更强
+            sliding_context = ""
             
             # Preprocess text
             processed_block = self.text_processor.preprocess_qa_text(block_content)
             
-            # Create prompt with context and anchor
+            # Create prompt with context information
+            # 新架构中使用置信度和领域信息来优化prompt
+            context_info = f"[置信度: {confidence}, 类型: {block_type}, 领域: {domain}]"
             prompt = self.qa_extractor.create_prompt(
                 processed_block,
                 sliding_context=sliding_context,
-                block_anchor=block_anchor
+                block_anchor=context_info
             )
             
             # Token monitoring
             if self.config.enable_token_monitoring:
-                self._track_token_usage(prompt, block_anchor, sliding_context)
+                self._track_token_usage(prompt, context_info, sliding_context)
             
-            # Call LLM
-            response = self.llm_client.call_ollama(
-                prompt, 
-                temperature=self.config.temperature
-            )
+            # 根据置信度决定处理策略
+            if confidence == 'high':
+                # 高置信度块：直接使用规则提取，无需LLM
+                self.logger.debug(f"Processing high confidence block {block_idx + 1} with rule-based extraction")
+                qa_pairs = self.qa_extractor._extract_from_high_confidence_block(processed_block)
+            elif confidence == 'medium':
+                # 中置信度块：使用完整LLM处理，但温度稍低
+                self.logger.debug(f"Processing medium confidence block {block_idx + 1} with LLM (conservative)")
+                response = self.llm_client.call_ollama(
+                    prompt, 
+                    temperature=max(0.05, self.config.temperature - 0.05)  # 稍微降低温度
+                )
+                
+                if response is None:
+                    self.logger.warning(f"❌ Block {block_idx + 1}: LLM call failed")
+                    if self.error_logger:
+                        self.error_logger.error(
+                            f"LLM call failed for block {block_idx + 1}\n"
+                            f"Block content:\n{block_content}"
+                        )
+                    return {
+                        'block_idx': block_idx,
+                        'success': False,
+                        'error': 'LLM call failed',
+                        'qa_count': 0
+                    }
+                
+                qa_pairs = self.qa_extractor.extract_json(response)
+                
+                if not qa_pairs:
+                    self.logger.warning(f"❌ Block {block_idx + 1}: No Q&A pairs extracted")
+                    if self.error_logger:
+                        self.error_logger.error(
+                            f"No valid Q&A pairs extracted for block {block_idx + 1}\n"
+                            f"LLM response: {response}\n"
+                            f"Block content:\n{block_content}"
+                        )
+                    return {
+                        'block_idx': block_idx,
+                        'success': False,
+                        'error': 'No Q&A pairs extracted',
+                        'qa_count': 0
+                    }
+            else:
+                # 低置信度块：使用更宽松的LLM处理，或跳过
+                if confidence == 'low':
+                    self.logger.debug(f"Processing low confidence block {block_idx + 1} with LLM (permissive)")
+                    # 对于低置信度块，可以选择跳过或使用更宽松的参数
+                    if self.config.skip_low_confidence:
+                        # 如果配置了跳过低置信度块
+                        self.logger.info(f"Skipping low confidence block {block_idx + 1} due to skip_low_confidence setting")
+                        return {
+                            'block_idx': block_idx,
+                            'success': True,
+                            'qa_count': 0,
+                            'qa_pairs': [],
+                            'skipped': True,
+                            'reason': 'Low confidence block skipped by configuration'
+                        }
+                
+                response = self.llm_client.call_ollama(
+                    prompt, 
+                    temperature=min(0.3, self.config.temperature + 0.05)  # 稍微提高温度，更宽松
+                )
+                
+                if response is None:
+                    self.logger.warning(f"❌ Block {block_idx + 1}: LLM call failed")
+                    return {
+                        'block_idx': block_idx,
+                        'success': False,
+                        'error': 'LLM call failed',
+                        'qa_count': 0
+                    }
+                
+                qa_pairs = self.qa_extractor.extract_json(response)
+                
+                # 对于低置信度块，即使没有提取到QA对也不算错误
+                if not qa_pairs:
+                    self.logger.debug(f"No Q&A pairs extracted from low confidence block {block_idx + 1}")
+                    return {
+                        'block_idx': block_idx,
+                        'success': True,
+                        'qa_count': 0,
+                        'qa_pairs': [],
+                        'reason': 'No QA pairs in low confidence block'
+                    }
             
-            if response is None:
-                self.logger.warning(f"❌ Block {block_idx + 1}: LLM call failed")
-                if self.error_logger:
-                    self.error_logger.error(
-                        f"LLM call failed for block {block_idx + 1}\n"
-                        f"Block content:\n{block_content}"
-                    )
-                return {
-                    'block_idx': block_idx,
-                    'success': False,
-                    'error': 'LLM call failed',
-                    'qa_count': 0
-                }
-            
-            # Extract Q&A pairs
-            qa_pairs = self.qa_extractor.extract_json(response)
-            
-            if not qa_pairs:
-                self.logger.warning(f"❌ Block {block_idx + 1}: No Q&A pairs extracted")
-                if self.error_logger:
-                    self.error_logger.error(
-                        f"No valid Q&A pairs extracted for block {block_idx + 1}\n"
-                        f"LLM response: {response}\n"
-                        f"Block content:\n{block_content}"
-                    )
-                return {
-                    'block_idx': block_idx,
-                    'success': False,
-                    'error': 'No Q&A pairs extracted',
-                    'qa_count': 0
-                }
-            
-            # Process Q&A pairs
-            processed_pairs = self.qa_extractor.process_qa_pairs(
-                qa_pairs, block_content, self.text_processor
-            )
+            # Process Q&A pairs (包括长答案处理)
+            processed_pairs = []
+            for qa_pair in qa_pairs:
+                # 清理问题文本
+                clean_question = self.text_processor.clean_question_text(qa_pair["question"])
+                answer = qa_pair["answer"]
+                
+                # 处理超长答案
+                if len(answer) > self.qa_extractor.chain_summary_threshold:
+                    self.logger.info(f"Processing long answer for block {block_idx + 1}")
+                    answer = self.qa_extractor._process_long_answer(answer, self.llm_client)
+                
+                processed_pairs.append({
+                    "question": clean_question,
+                    "answer": answer,
+                    "source_text": block_content,
+                    "source_confidence": confidence,
+                    "source_type": block_type,
+                    "domain": domain
+                })
             
             # Add metadata to Q&A pairs
             for pair in processed_pairs:
@@ -557,12 +626,20 @@ class QAExtractionProcessor:
             # 组合问答对内容
             qa_content = f"问题: {question}\n答案: {answer}"
             
-            # 调用SmartBlockProcessor的LLM anchor生成方法，但用于问答对
-            anchor = self.smart_block_processor._generate_anchor_with_llm(qa_content)
+            # 使用LLM生成主题关键词
+            prompt = f"""请为以下问答对提取 3 个核心关键词。
+请只返回关键词本身，并用逗号分隔，不要添加任何其他解释或前缀。
+
+{qa_content[:1500]}
+
+关键词："""
             
-            if anchor:
-                self.logger.debug(f"Generated topic for Q&A pair: {anchor}")
-                return anchor
+            keywords = self.llm_client.call_ollama(prompt, temperature=0.0)
+            
+            if keywords:
+                cleaned_keywords = keywords.strip().replace("关键词：", "").replace("核心关键词：", "").strip()
+                self.logger.debug(f"Generated topic for Q&A pair: {cleaned_keywords}")
+                return cleaned_keywords
             else:
                 self.logger.warning("Failed to generate topic for Q&A pair")
                 return ""
@@ -635,3 +712,45 @@ class QAExtractionProcessor:
             
         except Exception as e:
             self.logger.error(f"Error tracking token usage: {e}")
+    
+    def _analyze_confidence_processing(self, results: List[Dict[str, Any]], 
+                                     processed_blocks_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """分析置信度分级处理的效果"""
+        confidence_stats = {
+            'high_confidence_blocks': 0,
+            'medium_confidence_blocks': 0, 
+            'low_confidence_blocks': 0,
+            'skipped_blocks': 0,
+            'high_confidence_qa_pairs': 0,
+            'medium_confidence_qa_pairs': 0,
+            'low_confidence_qa_pairs': 0,
+            'llm_calls_saved': 0  # 高置信度块节省的LLM调用次数
+        }
+        
+        # 统计原始块的置信度分布
+        for block in processed_blocks_data:
+            confidence = block.get('confidence', 'unknown')
+            if confidence == 'high':
+                confidence_stats['high_confidence_blocks'] += 1
+                confidence_stats['llm_calls_saved'] += 1  # 高置信度块节省了LLM调用
+            elif confidence == 'medium':
+                confidence_stats['medium_confidence_blocks'] += 1
+            elif confidence == 'low':
+                confidence_stats['low_confidence_blocks'] += 1
+        
+        # 统计处理结果
+        for result in results:
+            if result.get('skipped'):
+                confidence_stats['skipped_blocks'] += 1
+            elif result.get('success') and 'qa_pairs' in result:
+                # 根据qa_pairs中的source_confidence统计
+                for pair in result['qa_pairs']:
+                    source_confidence = pair.get('source_confidence', 'unknown')
+                    if source_confidence == 'high':
+                        confidence_stats['high_confidence_qa_pairs'] += 1
+                    elif source_confidence == 'medium':
+                        confidence_stats['medium_confidence_qa_pairs'] += 1
+                    elif source_confidence == 'low':
+                        confidence_stats['low_confidence_qa_pairs'] += 1
+        
+        return confidence_stats
