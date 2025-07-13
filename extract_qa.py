@@ -14,6 +14,10 @@ from pathlib import Path
 # Add src to path to import our modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
+# Bootstrap script to ensure dependencies are met
+import scripts.bootstrap as bootstrap
+bootstrap.download_spacy_model()
+
 from src.config import Config, load_config, save_config, get_default_config_path
 from src.processor import QAExtractionProcessor
 from src.utils import setup_logger
@@ -239,15 +243,14 @@ def validate_setup(processor: QAExtractionProcessor) -> bool:
             print(f"  • {issue}")
     
     if validation['warnings']:
-        print("⚠️ Warnings:")
+        print("⚠️  Warnings:")
         for warning in validation['warnings']:
             print(f"  • {warning}")
     
     if validation['valid']:
-        print("✅ Setup validation passed!")
+        print("✅ Setup validation successful.")
         return True
     else:
-        print("❌ Setup validation failed. Please fix the issues above.")
         return False
 
 
@@ -320,67 +323,56 @@ def print_results(results: dict, processor=None) -> None:
 
 
 def main():
-    """Main entry point."""
-    parser = create_parser()
+    """Main function."""
+    parser = argparse.ArgumentParser(description='Extract Q&A pairs from PDF using LLM')
+    parser.add_argument('pdf_path', help='Path to the PDF file to process')
+    parser.add_argument('--config', default='config/config.yaml', help='Path to configuration file')
+    parser.add_argument('--validate', action='store_true', help='Validate setup without processing')
+    
     args = parser.parse_args()
     
-    # Handle special actions
-    if args.create_config:
-        create_sample_config()
-        return
-    
-    # Load configuration
     try:
-        config = load_and_merge_config(args)
-    except Exception as e:
-        print(f"❌ Failed to load configuration: {e}")
-        sys.exit(1)
-    
-    # Validate required arguments - check both command line and config file
-    if not args.validate and not args.pdf_file and not config.pdf_filename:
-        parser.error("PDF file is required either as command line argument or in configuration file (unless using --validate or --create-config)")
-    
-    # Use PDF file from config if not provided in command line
-    pdf_file_to_process = args.pdf_file or config.pdf_filename
-    
-    # Initialize processor
-    try:
-        processor = QAExtractionProcessor(config)
-    except Exception as e:
-        print(f"❌ Failed to initialize processor: {e}")
-        sys.exit(1)
-    
-    # Handle validation mode
-    if args.validate:
-        if validate_setup(processor):
-            print("🎉 System is ready for processing!")
-            sys.exit(0)
-        else:
-            sys.exit(1)
-    
-    # Validate setup before processing
-    if not validate_setup(processor):
-        print("Fix the issues above before processing.")
-        sys.exit(1)
-    
-    # Process the PDF
-    try:
-        print(f"🚀 Starting Q&A extraction from: {pdf_file_to_process}")
-        results = processor.process_pdf(pdf_file_to_process)
-        print_results(results, processor)
+        # 加载配置
+        print("🔧 Loading configuration...")
+        config = load_config(args.config)
         
-        if results['success']:
-            print("🎉 Processing completed successfully!")
+        # 初始化处理器
+        print("🔧 Initializing processor...")
+        processor = QAExtractionProcessor(config)
+        
+        # 验证设置
+        if args.validate:
+            print("🔍 Validating setup...")
+            validation_result = processor.validate_setup()
+            if validation_result.get('success', False):
+                print("✅ Setup validation successful.")
+            else:
+                print(f"❌ Setup validation failed: {validation_result.get('message', 'Unknown error')}")
+            return
+        
+        # 处理PDF
+        print(f"🚀 Starting Q&A extraction from: {args.pdf_path}")
+        
+        # 添加更详细的进度跟踪
+        print("📍 Step 1: Starting PDF processing...")
+        result = processor.process_pdf(args.pdf_path)
+        print("📍 Step 2: PDF processing completed")
+        
+        # 打印结果
+        print("📍 Step 3: Processing results...")
+        if result.get('success', False):
+            print_results(result)
         else:
-            print("❌ Processing failed.")
-            sys.exit(1)
-            
+            print(f"❌ Processing failed: {result.get('message', 'Unknown error')}")
+        
+        print("📍 Step 4: All done!")
+        
     except KeyboardInterrupt:
-        print("\n⚠️ Processing interrupted by user")
-        sys.exit(1)
+        print("\\n⏹️ Processing interrupted by user")
     except Exception as e:
-        print(f"❌ An error occurred during processing: {e}")
-        sys.exit(1)
+        print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

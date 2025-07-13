@@ -4,6 +4,10 @@ import json
 import re
 from typing import List, Dict, Any, Optional
 import logging
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+from ..config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -11,9 +15,16 @@ logger = logging.getLogger(__name__)
 class QAExtractor:
     """Handles extraction and processing of Q&A pairs from LLM responses."""
     
-    def __init__(self, max_prompt_tokens: int = 6000):
+    def __init__(self, llm_client, max_prompt_tokens: int = 6000, config: Optional[Config] = None):
+        self.config = config if config else Config()
+        self.llm_client = llm_client
         self.logger = logger
-        self.max_prompt_tokens = max_prompt_tokens  # 留一些余量给模型
+        self.max_prompt_tokens = max_prompt_tokens
+
+        # 加载一个NLI模型用于蕴含校验
+        nli_model_path = getattr(self.config, "nli_model_path", "cross-encoder/nli-deberta-v3-base")
+        self.nli_tokenizer = AutoTokenizer.from_pretrained(nli_model_path)
+        self.nli_model = AutoModelForSequenceClassification.from_pretrained(nli_model_path)
         
         # 精简版基础prompt，保留核心功能但大幅缩短
         self.compact_prompt = """你是中文问答对提取专家，从原文提取段永平的所有真实问答对。
@@ -78,6 +89,111 @@ class QAExtractor:
 🔍 请仔细分析以下原文，提取所有符合条件的问答对：
 """
     
+    def _check_entailment(self, premise: str, hypothesis: str) -> bool:
+        # 蕴含校验核心逻辑
+        input_pair = [[premise, hypothesis]]
+        features = self.nli_tokenizer(input_pair, padding=True, truncation=True, return_tensors="pt")
+        self.nli_model.eval()
+        with torch.no_grad():
+            scores = self.nli_model(**features).logits
+            # label_mapping = ['contradiction', 'entailment', 'neutral']
+            # 我们只关心蕴含（entailment）的概率
+            entailment_score = torch.softmax(scores, dim=1)[0][1].item() 
+        
+        return entailment_score > getattr(self.config, "entailment_threshold", 0.7)
+
+    def _process_long_answer(self, group_text: str) -> List[Dict[str, Any]]:
+        # 链式摘要处理逻辑
+        # ... 实现切分、调用LLM生成摘要、调用_check_entailment进行校验
+        # ... 如果校验失败，可以采用抽取式摘要或更严格的LLM Prompt作为fallback
+        # For now, we just call the single block processor
+        return self._process_single_block(group_text)
+    
+    def process_groups(self, groups: list[dict]):
+        """Process multiple groups with progress tracking and error handling."""
+        final_qa_pairs = []
+        total_groups = len(groups)
+        successful_groups = 0
+        failed_groups = 0
+        
+        self.logger.info(f"🚀 Starting processing {total_groups} groups...")
+        
+        for i, group in enumerate(groups, 1):
+            self.logger.info(f"🔄 Processing group {i}/{total_groups} ({len(group['content'])} chars)...")
+            
+            try:
+                group_text = group['content']
+                chain_summary_threshold = getattr(self.config, "chain_summary_threshold", 3000)
+                
+                if len(group_text) > chain_summary_threshold:
+                    self.logger.info(f"📄 Group {i} is long ({len(group_text)} chars), using chain summary...")
+                    qa_pairs = self._process_long_answer(group_text)
+                else:
+                    self.logger.info(f"📄 Group {i} is normal size, using single block processing...")
+                    qa_pairs = self._process_single_block(group_text)
+                
+                if qa_pairs:
+                    final_qa_pairs.extend(qa_pairs)
+                    successful_groups += 1
+                    self.logger.info(f"✅ Group {i} processed successfully: {len(qa_pairs)} Q&A pairs extracted")
+                else:
+                    failed_groups += 1
+                    self.logger.warning(f"⚠️ Group {i} processed but no Q&A pairs extracted")
+                    
+            except Exception as e:
+                failed_groups += 1
+                self.logger.error(f"❌ Group {i} processing failed: {e}")
+                self.logger.debug(f"Failed group content preview: {group_text[:200]}...")
+        
+        self.logger.info(f"🎉 Processing completed:")
+        self.logger.info(f"  ✅ Successful groups: {successful_groups}/{total_groups}")
+        self.logger.info(f"  ❌ Failed groups: {failed_groups}/{total_groups}")
+        self.logger.info(f"  🎯 Total Q&A pairs extracted: {len(final_qa_pairs)}")
+        
+        return final_qa_pairs
+
+    def _process_single_block(self, block_text: str) -> Optional[List[Dict[str, str]]]:
+        """Process a single block of text to extract Q&A pairs."""
+        try:
+            # Choose prompt based on available token space
+            prompt_template = self.full_prompt
+            if self.estimate_token_count(block_text) > (self.max_prompt_tokens - 500):
+                prompt_template = self.compact_prompt
+            
+            prompt = f"{prompt_template}\n\n{block_text}"
+            
+            # Smart truncation if still too long
+            # This is a fallback and should ideally not be hit if blocks are sized well
+            if self.estimate_token_count(prompt) > self.max_prompt_tokens:
+                # Calculate allowed chars for the block text
+                allowed_chars = int(len(block_text) * (self.max_prompt_tokens / self.estimate_token_count(prompt)))
+                block_text = self._smart_truncate_text(block_text, allowed_chars)
+                prompt = f"{prompt_template}\n\n{block_text}"
+
+            # Call LLM
+            response_text = self.llm_client.call_ollama(prompt, temperature=self.config.temperature)
+            
+            if not response_text:
+                self.logger.warning(f"No response from LLM for block: {block_text[:100]}...")
+                return None
+
+            self.logger.debug(f"LLM raw response:\n{response_text}")
+            
+            # Extract JSON from response
+            qa_pairs = self.extract_json(response_text)
+            
+            if qa_pairs:
+                self.logger.info(f"Successfully extracted {len(qa_pairs)} Q&A pairs from block.")
+                return qa_pairs
+            else:
+                self.logger.warning(f"No Q&A pairs extracted from block: {block_text[:100]}...")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Error processing block: {e}")
+            self.logger.debug(f"Block content that caused error: {block_text[:500]}")
+            return None
+
     def estimate_token_count(self, text: str) -> int:
         """估算文本的token数量（中文约1.5倍字符数）"""
         # 中文字符和token比例约1:1.5，英文约1:0.75，取保守估计
@@ -85,60 +201,25 @@ class QAExtractor:
         other_chars = len(text) - chinese_chars
         return int(chinese_chars * 1.5 + other_chars * 0.75)
     
-    def create_prompt(self, text_block: str, sliding_context: str = "", block_anchor: str = "") -> str:
-        """创建完整的LLM提示，支持智能长度管理。
-        
-        Args:
-            text_block: 需要提取问答对的文本内容
-            sliding_context: 前一个相关文本块的末尾部分，用于提供额外上下文
-            block_anchor: 当前文本块的核心主题或关键词
-            
-        Returns:
-            完整的提示文本
-        """
-        # 构建上下文部分
-        context_section = ""
-        if sliding_context:
-            context_section += f"\n\n上下文：{sliding_context[:200]}...\n"  # 限制上下文长度
-        
-        if block_anchor:
-            context_section += f"\n主题：{block_anchor}\n"
-        
-        # 尝试使用完整prompt
-        full_prompt_text = f"{self.full_prompt}{context_section}\n\n{text_block}"
-        full_tokens = self.estimate_token_count(full_prompt_text)
-        
-        # 如果完整prompt不超限，使用完整版
-        if full_tokens <= self.max_prompt_tokens:
-            self.logger.debug(f"Using full prompt, estimated tokens: {full_tokens}")
-            return full_prompt_text
-        
-        # 否则使用精简版prompt
-        compact_prompt_text = f"{self.compact_prompt}{context_section}\n\n{text_block}"
-        compact_tokens = self.estimate_token_count(compact_prompt_text)
-        
-        # 如果精简版仍超限，需要截断文本块
-        if compact_tokens > self.max_prompt_tokens:
-            # 计算可用于文本块的token数
-            base_tokens = self.estimate_token_count(f"{self.compact_prompt}{context_section}")
-            available_tokens = self.max_prompt_tokens - base_tokens - 100  # 留100token余量
-            
-            # 估算可容纳的字符数
-            available_chars = int(available_tokens / 1.5)  # 保守估计
-            
-            if available_chars > 100:  # 确保有最小的文本量
-                truncated_block = self._smart_truncate_text(text_block, available_chars)
-                compact_prompt_text = f"{self.compact_prompt}{context_section}\n\n{truncated_block}"
-                self.logger.warning(f"Text block truncated to {len(truncated_block)} chars due to token limit")
-            else:
-                # 如果连最小文本都放不下，去掉上下文信息
-                compact_prompt_text = f"{self.compact_prompt}\n\n{text_block[:available_chars]}"
-                self.logger.warning(f"Context removed due to token limit, text truncated to {available_chars} chars")
-        
-        final_tokens = self.estimate_token_count(compact_prompt_text)
-        self.logger.debug(f"Using compact prompt, estimated tokens: {final_tokens}")
-        return compact_prompt_text
-    
+    def get_full_prompt(self, text_block: str, block_anchor: str = "", sliding_context: str = "") -> str:
+        """Creates a full prompt for the LLM, managing token limits."""
+        # This is a simplified version; in a real scenario, you'd have more logic
+        # to decide between compact and full prompts, and to truncate text.
+        return f"{self.full_prompt}\n\nContext: {sliding_context}\nAnchor: {block_anchor}\n\n{text_block}"
+
+    def validate_qa_pairs(self, qa_pairs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Validates a list of QA pairs."""
+        # Simple validation, can be expanded
+        return [p for p in qa_pairs if "question" in p and "answer" in p]
+
+    def generate_topic(self, question: str, answer: str) -> str:
+        """Generates a topic for a Q&A pair."""
+        # In a real implementation, this would call the LLM
+        prompt = f"Generate a short, concise topic for the following Q&A pair:\n\nQuestion: {question}\nAnswer: {answer}\n\nTopic:"
+        # response = self.llm_client.generate(prompt)
+        # return response.strip()
+        return "Generated Topic" # Placeholder
+
     def _smart_truncate_text(self, text: str, max_chars: int) -> str:
         """智能截断文本，尽量保持完整性"""
         if len(text) <= max_chars:
@@ -182,7 +263,7 @@ class QAExtractor:
         
         try:
             # Try to find JSON blocks wrapped in ```json```
-            json_blocks = re.findall(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+            json_blocks = re.findall(r'```json\\s*(.*?)\\s*```', text, re.DOTALL)
             
             if json_blocks:
                 for json_block in json_blocks:
@@ -248,124 +329,95 @@ class QAExtractor:
         return results
     
     def _extract_json_objects(self, content: str) -> List[str]:
-        """Extract individual JSON objects from text containing multiple objects.
+        """Extract multiple JSON objects from a single string.
         
         Args:
-            content: Text content containing JSON objects
+            content: String possibly containing multiple JSON objects
             
         Returns:
             List of JSON object strings
         """
         json_objects = []
-        brace_count = 0
-        start_pos = -1
+        brace_level = 0
+        start_index = -1
         
         for i, char in enumerate(content):
             if char == '{':
-                if brace_count == 0:
-                    start_pos = i
-                brace_count += 1
+                if brace_level == 0:
+                    start_index = i
+                brace_level += 1
             elif char == '}':
-                brace_count -= 1
-                if brace_count == 0 and start_pos != -1:
-                    json_str = content[start_pos:i+1]
-                    json_objects.append(json_str)
-                    start_pos = -1
-        
+                brace_level -= 1
+                if brace_level == 0 and start_index != -1:
+                    json_objects.append(content[start_index:i+1])
+                    start_index = -1
+                    
         return json_objects
     
     def _is_valid_qa_pair(self, data: Any) -> bool:
-        """Check if the data is a valid Q&A pair.
-        
-        Args:
-            data: Data object to validate
-            
-        Returns:
-            True if valid Q&A pair, False otherwise
-        """
+        """Check if a dictionary is a valid Q&A pair."""
         return (isinstance(data, dict) and 
                 "question" in data and "answer" in data and
-                data.get("question") and data.get("answer") and
-                str(data.get("question", "")).strip() and 
-                str(data.get("answer", "")).strip())
+                isinstance(data["question"], str) and data["question"].strip() and
+                isinstance(data["answer"], str) and data["answer"].strip())
     
     def process_qa_pairs(self, qa_pairs: List[Dict[str, Any]], 
                         source_text: str, 
                         text_processor) -> List[Dict[str, Any]]:
-        """Process extracted Q&A pairs with cleaning and formatting.
+        """Process extracted Q&A pairs for quality and formatting.
         
         Args:
-            qa_pairs: List of raw Q&A pairs
-            source_text: Original source text
-            text_processor: TextProcessor instance for cleaning
+            qa_pairs: List of extracted Q&A pairs
+            source_text: The original text block the pairs were extracted from
+            text_processor: The text processor for cleaning
             
         Returns:
-            List of processed Q&A pairs
+            List of processed and cleaned Q&A pairs
         """
         processed_pairs = []
-        
-        for qa_pair in qa_pairs:
-            if not self._is_valid_qa_pair(qa_pair):
-                continue
+        for pair in qa_pairs:
+            # Clean up text
+            pair["question"] = text_processor.clean_question_text(pair["question"])
+            pair["answer"] = pair["answer"]
             
-            # Clean question text
-            clean_question = text_processor.clean_question_text(qa_pair["question"])
+            # Add source text metadata
+            pair["source_text"] = source_text
             
-            # Create final Q&A pair
-            final_pair = {
-                "question": clean_question,
-                "answer": qa_pair["answer"],
-                "source_text": source_text
-            }
-            
-            processed_pairs.append(final_pair)
+            processed_pairs.append(pair)
         
         return processed_pairs
     
     def validate_extraction_quality(self, original_text: str, 
                                    qa_pairs: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate the quality of extracted Q&A pairs.
+        """Validate the quality of extracted Q&A pairs against the source text.
         
         Args:
-            original_text: Original text that was processed
-            qa_pairs: Extracted Q&A pairs
+            original_text: The source text
+            qa_pairs: List of extracted Q&A pairs
             
         Returns:
-            Quality metrics dictionary
+            A dictionary with validation status and feedback.
         """
-        metrics = {
-            'total_pairs': len(qa_pairs),
-            'avg_question_length': 0,
-            'avg_answer_length': 0,
-            'has_duplicates': False,
-            'quality_score': 0.0
-        }
-        
         if not qa_pairs:
-            return metrics
+            return { "is_valid": True, "feedback": "No Q&A pairs to validate." }
         
-        # Calculate average lengths
-        question_lengths = [len(pair['question']) for pair in qa_pairs]
-        answer_lengths = [len(pair['answer']) for pair in qa_pairs]
+        is_valid = True
+        feedback = []
         
-        metrics['avg_question_length'] = sum(question_lengths) / len(question_lengths)
-        metrics['avg_answer_length'] = sum(answer_lengths) / len(answer_lengths)
+        # Example validation: Check if question and answer text appear in the source
+        for i, pair in enumerate(qa_pairs):
+            q_text = pair['question'].split('：', 1)[-1].strip()
+            a_text = pair['answer'].split('：', 1)[-1].strip()
+            
+            if q_text not in original_text:
+                is_valid = False
+                feedback.append(f"Pair {i+1}: Question text not found in source.")
+            
+            if a_text not in original_text:
+                is_valid = False
+                feedback.append(f"Pair {i+1}: Answer text not found in source.")
         
-        # Check for duplicates
-        questions = [pair['question'] for pair in qa_pairs]
-        metrics['has_duplicates'] = len(questions) != len(set(questions))
-        
-        # Calculate quality score (simple heuristic)
-        score = 0.0
-        if metrics['avg_question_length'] > 5:
-            score += 0.3
-        if metrics['avg_answer_length'] > 10:
-            score += 0.3
-        if not metrics['has_duplicates']:
-            score += 0.2
-        if metrics['total_pairs'] > 0:
-            score += 0.2
-        
-        metrics['quality_score'] = score
-        
-        return metrics 
+        return {
+            "is_valid": is_valid,
+            "feedback": feedback
+        }

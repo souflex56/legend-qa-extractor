@@ -14,7 +14,7 @@ pdf_filename: "uploaded.pdf"
 
 # 输出文件名 (必填)
 # 生成的 QA 对将保存到此文件，格式为 JSONL
-output_filename: "output_final_qa_1500.jsonl"
+output_filename: "output_final_qa_chunk_g.jsonl"
 
 # 输出目录 (必填)
 # 所有输出文件（包括日志）将保存到此目录
@@ -40,19 +40,20 @@ temperature: 0.1
 # 核心配置项 - 控制文本分块和处理策略
 
 # 最大块大小 (必填，默认: 1200)
-# 🚀 优化后：减小块大小以提高处理速度，同时保持质量
+# 🚀 优化后：大幅减小块大小以提高处理速度
 # 单个文本块的最大字符数，更大的块提供更多上下文但处理更慢
-max_block_size: 1500
+max_block_size: 800
 
 # 最小块大小 (必填，默认: 150)
 # 🚀 优化后：适当减小最小块大小，避免丢失短但有价值的QA对
 # 单个文本块的最小字符数，小于此值的块将被丢弃
-min_block_size: 200
+min_block_size: 150
 
 # 提取比例 (必填，默认: 1.0)
+# 🚀 优化后：先用较小比例测试，确保能正常提取
 # 处理块的比例，范围 0.0-1.0
-# 建议：快速测试使用 0.1 (10%)，完整处理使用 1.0 (100%)
-extract_ratio: 1
+# 1.0 = 处理所有块，0.1 = 处理 10% 的块
+extract_ratio: 0.1
 
 # ==================== 智能分块配置 (Smart Block Processing) ====================
 # 高级配置项 - 智能文本分块功能
@@ -67,8 +68,9 @@ qa_allowance_ratio: 1.1
 enable_sliding_context: true
 
 # 启用 LLM 锚点 (可选，默认: true)
+# 🚀 暂时关闭以提高处理速度
 # 使用 LLM 生成主题锚点，提高分块准确性，但会增加处理时间
-enable_llm_anchor: true
+enable_llm_anchor: false
 
 # 锚点关键词数量 (可选，默认: 3)
 # 每个文本块生成的主题锚点数量
@@ -88,10 +90,18 @@ enable_token_monitoring: true
 # ==================== QA 过滤配置 (QA Filtering Configuration) ====================
 # 可选配置项 - 提高处理效率
 
-# 启用 QA 过滤 (可选，默认: false)
-# 只处理包含 QA 模式的文本块，提高处理速度
-# 建议：当文档有明确的问答结构时启用
-enable_qa_filter: false
+# 新增语义分组配置
+semantic_grouping:
+  max_question_length: 50
+  default_similarity_threshold: 0.65
+  std_factor: 0.5 # 动态阈值计算中的标准差系数
+
+# 新增长答案处理与风险控制配置
+long_answer_processing:
+  chain_summary_threshold: 3000 # 超过此长度启动链式摘要
+  summary_length: 50
+  nli_model_path: "cross-encoder/nli-deberta-v3-base" # 蕴含校验模型
+  entailment_threshold: 0.7 # 蕴含分数阈值
 
 # 已知问题前缀 (可选)
 # 用于识别问题的关键词前缀，支持自定义添加
@@ -123,7 +133,7 @@ known_prefixes:
 # 日志级别 (可选，默认: INFO)
 # 选项：DEBUG, INFO, WARNING, ERROR, CRITICAL
 # DEBUG: 详细调试信息，INFO: 一般信息，WARNING: 警告，ERROR: 错误
-log_level: "INFO"
+log_level: "DEBUG"
 
 # 启用成功日志 (可选，默认: true)
 # 记录成功提取的 QA 对详细信息
@@ -150,6 +160,11 @@ batch_size: 4  # 🎯
 # max_workers = 2-3: 适中并发，适合普通服务器
 # max_workers = 4+: 高并发，需要高性能Ollama服务器支持
 max_workers: 3  # 🎯 
+
+# 启用模型预热 (可选，默认: true)
+# 🚀 暂时关闭模型预热以加快启动速度
+# 在程序启动时预热模型，减少首次调用延迟
+enable_model_warmup: false
 
 # =============================================================================
 # 环境变量支持 (Environment Variable Support)
