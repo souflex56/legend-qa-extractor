@@ -1,0 +1,188 @@
+{
+  "metadata": {
+    "created_at": "2025-07-14T15:13:36.054000",
+    "total_blocks": 3,
+    "statistics": {
+      "total_blocks": 3,
+      "high_confidence_blocks": 1,
+      "medium_confidence_blocks": 1,
+      "low_confidence_blocks": 1,
+      "successful_extractions": 3,
+      "failed_extractions": 0,
+      "skipped_blocks": 1,
+      "llm_calls": 1,
+      "rule_based_extractions": 1
+    }
+  },
+  "blocks": [
+    {
+      "block_id": "block_0001",
+      "block_idx": 0,
+      "original_indices": [
+        0,
+        1
+      ],
+      "content": "网友：什么是价值投资？\n段永平：价值投资就是买优秀的公司。",
+      "content_length": 29,
+      "confidence": "high",
+      "type": "rule_based",
+      "domain": "financial",
+      "created_at": "2025-07-14T15:13:36.053392",
+      "processing_history": [
+        {
+          "step_name": "rule_based_extraction_start",
+          "timestamp": "2025-07-14T15:13:36.053967",
+          "details": {
+            "confidence": "high",
+            "block_type": "rule_based"
+          }
+        },
+        {
+          "step_name": "rule_based_extraction",
+          "timestamp": "2025-07-14T15:13:36.053975",
+          "details": {
+            "qa_pairs_count": 1,
+            "processing_time": 0.1,
+            "qa_pairs_preview": [
+              {
+                "question": "什么是价值投资？",
+                "answer": "价值投资就是买优秀的公司。"
+              }
+            ]
+          }
+        }
+      ],
+      "extraction_results": {
+        "success": true,
+        "qa_pairs": [
+          {
+            "question": "什么是价值投资？",
+            "answer": "价值投资就是买优秀的公司。"
+          }
+        ],
+        "qa_count": 1,
+        "error": null,
+        "processing_method": "rule_based",
+        "llm_response": null,
+        "confidence_scores": [],
+        "processing_time": 0.15
+      },
+      "metadata": {
+        "has_qa_patterns": {
+          "question_patterns": true,
+          "answer_patterns": true,
+          "indirect_question_patterns": false
+        },
+        "word_count": 2,
+        "paragraph_count": 1,
+        "contains_questions": true,
+        "contains_answers": true
+      }
+    },
+    {
+      "block_id": "block_0002",
+      "block_idx": 1,
+      "original_indices": [
+        2,
+        3
+      ],
+      "content": "有人认为投资很难，需要很多专业知识。\n段永平：投资其实很简单，就是买好公司。",
+      "content_length": 38,
+      "confidence": "medium",
+      "type": "semantic",
+      "domain": "financial",
+      "created_at": "2025-07-14T15:13:36.053669",
+      "processing_history": [
+        {
+          "step_name": "llm_call_start",
+          "timestamp": "2025-07-14T15:13:36.053983",
+          "details": {
+            "confidence": "medium",
+            "temperature": 0.1
+          }
+        },
+        {
+          "step_name": "llm_call",
+          "timestamp": "2025-07-14T15:13:36.053985",
+          "details": {
+            "prompt_length": 31,
+            "response_length": 63,
+            "temperature": 0.1,
+            "processing_time": 2.5,
+            "prompt_preview": "你是中文问答对提取专家，从原文提取段永平的所有真实问答对...",
+            "response_preview": "{\"question\": \"有人认为投资很难，需要很多专业知识。\", \"answer\": \"投资其实很简单，就是买好公司。\"}"
+          }
+        }
+      ],
+      "extraction_results": {
+        "success": true,
+        "qa_pairs": [
+          {
+            "question": "有人认为投资很难，需要很多专业知识。",
+            "answer": "投资其实很简单，就是买好公司。"
+          }
+        ],
+        "qa_count": 1,
+        "error": null,
+        "processing_method": "llm",
+        "llm_response": null,
+        "confidence_scores": [],
+        "processing_time": 2.6
+      },
+      "metadata": {
+        "has_qa_patterns": {
+          "question_patterns": false,
+          "answer_patterns": true,
+          "indirect_question_patterns": true
+        },
+        "word_count": 2,
+        "paragraph_count": 1,
+        "contains_questions": false,
+        "contains_answers": true
+      }
+    },
+    {
+      "block_id": "block_0003",
+      "block_idx": 2,
+      "original_indices": [
+        4
+      ],
+      "content": "这是一段普通的文本，可能包含一些投资相关的内容，但没有明确的问答结构。",
+      "content_length": 35,
+      "confidence": "low",
+      "type": "semantic_merge",
+      "domain": "general",
+      "created_at": "2025-07-14T15:13:36.053850",
+      "processing_history": [
+        {
+          "step_name": "block_skipped",
+          "timestamp": "2025-07-14T15:13:36.053990",
+          "details": {
+            "reason": "Low confidence block skipped by configuration"
+          }
+        }
+      ],
+      "extraction_results": {
+        "success": true,
+        "qa_pairs": [],
+        "qa_count": 0,
+        "error": null,
+        "processing_method": "skipped",
+        "llm_response": null,
+        "confidence_scores": [],
+        "processing_time": 0.05
+      },
+      "metadata": {
+        "has_qa_patterns": {
+          "question_patterns": false,
+          "answer_patterns": false,
+          "indirect_question_patterns": false
+        },
+        "word_count": 1,
+        "paragraph_count": 1,
+        "contains_questions": false,
+        "contains_answers": false
+      }
+    }
+  ]
+}

@@ -464,7 +464,7 @@ class QAExtractor:
     def _extract_key_sentences(self, text: str, num_sentences: int = 3) -> str:
         """抽取式摘要：提取关键句子作为备用方案"""
         # 按句子分割
-        sentences = re.split(r'(?<=[。！？；])\s*', text)
+        sentences = re.split(r'(?<=[。！？；])', text)
         sentences = [s.strip() for s in sentences if s.strip()]
         
         if len(sentences) <= num_sentences:
@@ -595,76 +595,168 @@ class QAExtractor:
         return all_qa_pairs
     
     def _extract_from_high_confidence_block(self, content: str) -> List[Dict[str, Any]]:
-        """从高置信度块中提取问答对（基于规则）"""
+        """
+        从高置信度块中提取问答对（基于规则）- 改进版本
+        
+        主要改进：
+        1. 更精确的前缀匹配
+        2. 处理编号和时间戳
+        3. 质量验证
+        4. 内容清理
+        5. 支持带标识符的说话人模式（如"网友O"、"A 网友"、"记者 A"等）
+        """
+        
+        # 定义说话人前缀（可扩展）
+        questioner_prefixes = ['网友', '问', 'Q', '记者', '提问', '主持人', '观众']
+        answerer_prefixes = ['段永平', '段', '大道', '答', 'A']
+        
+        # 预处理：去除编号前缀（如"08. 网友："）
+        content = re.sub(r'(?:^|\n)\d+\.\s*', '\n', content, flags=re.MULTILINE)
+        
+        # 构建更精确的正则表达式，支持多种说话人模式：
+        # 1. 基本模式：网友：
+        # 2. 前缀+标识符：网友O：, 网友A：, 记者123：
+        # 3. 标识符+前缀：A 网友：, sam 观众：
+        questioner_patterns = []
+        answerer_patterns = []
+        
+        for prefix in questioner_prefixes:
+            # 模式1: 前缀 + 可选空格 + 可选标识符 (网友O, 网友 A, 记者 123等)
+            questioner_patterns.append(f'{re.escape(prefix)}\\s*[A-Za-z0-9\u4e00-\u9fa5]*')
+            # 模式2: 标识符 + 空格 + 前缀 (A 网友, sam 观众等)
+            questioner_patterns.append(f'[A-Za-z0-9\u4e00-\u9fa5]+\\s+{re.escape(prefix)}')
+        
+        for prefix in answerer_prefixes:
+            # 模式1: 前缀 + 可选空格 + 可选标识符
+            answerer_patterns.append(f'{re.escape(prefix)}\\s*[A-Za-z0-9\u4e00-\u9fa5]*')
+            # 模式2: 标识符 + 空格 + 前缀  
+            answerer_patterns.append(f'[A-Za-z0-9\u4e00-\u9fa5]+\\s+{re.escape(prefix)}')
+        
+        all_patterns = questioner_patterns + answerer_patterns
+        
+        # 匹配：行首或换行后的说话人模式，后面跟冒号
+        pattern = re.compile(f'(?:^|\\n)\\s*({"|".join(all_patterns)})\\s*[:：]', re.MULTILINE)
+        
+        # 使用finditer而不是split，获得更多控制
+        matches = list(pattern.finditer(content))
+        
+        if not matches:
+            return []
+        
         qa_pairs = []
+        current_qa = {}
         
-        # 简单的基于模式的提取
-        lines = content.split('\n')
-        current_question = None
-        current_answer_lines = []
-        
-        question_patterns = [
-            r"^网友[：:](.+)$",
-            r"^记者[：:](.+)$",
-            r"^问[：:](.+)$",
-            r"^提问[：:](.+)$",
-            r"^Q[：:](.+)$"
-        ]
-        
-        answer_patterns = [
-            r"^段永平[：:](.+)$",
-            r"^段[：:](.+)$",
-            r"^答[：:](.+)$",
-            r"^A[：:](.+)$"
-        ]
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
+        for i, match in enumerate(matches):
+            speaker = match.group(1).strip()
+            
+            # 确定内容的开始和结束位置
+            content_start = match.end()
+            content_end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+            
+            content_text = content[content_start:content_end].strip()
+            
+            # 注意：这里不立即清理内容，保留原始文本用于后续时间戳提取
+            if not content_text.strip():
                 continue
             
-            # 检查是否是问题
-            question_match = None
-            for pattern in question_patterns:
-                match = re.match(pattern, line)
-                if match:
-                    question_match = match.group(1).strip()
-                    break
-            
-            if question_match:
-                # 保存之前的问答对
-                if current_question and current_answer_lines:
-                    qa_pairs.append({
-                        'question': current_question,
-                        'answer': '\n'.join(current_answer_lines)
-                    })
+            # 判断说话人类型
+            is_questioner = self._is_questioner(speaker, questioner_prefixes)
+            is_answerer = self._is_answerer(speaker, answerer_prefixes)
                 
-                current_question = question_match
-                current_answer_lines = []
-                continue
+            # 处理问题
+            if is_questioner:
+                # 保存上一个问答对
+                if self._is_valid_qa_pair_rule_based(current_qa):
+                    qa_pairs.append(self._finalize_qa_pair(current_qa))
+                
+                # 开始新的问答对，存储原始内容
+                current_qa = {
+                    "question": content_text,
+                    "answer": "",
+                    "source_confidence": "high",
+                    "source_type": "rule_based"
+                }
             
-            # 检查是否是答案开始
-            answer_match = None
-            for pattern in answer_patterns:
-                match = re.match(pattern, line)
-                if match:
-                    answer_match = match.group(1).strip()
-                    break
-            
-            if answer_match and current_question:
-                current_answer_lines.append(answer_match)
-            elif current_question and current_answer_lines:
-                # 继续收集答案内容
-                current_answer_lines.append(line)
+            # 处理回答
+            elif is_answerer and 'question' in current_qa:
+                if current_qa.get("answer"):
+                    current_qa["answer"] += "\n\n" + content_text
+                else:
+                    current_qa["answer"] = content_text
         
-        # 保存最后的问答对
-        if current_question and current_answer_lines:
-            qa_pairs.append({
-                'question': current_question,
-                'answer': '\n'.join(current_answer_lines)
-            })
+        # 保存最后一个问答对
+        if self._is_valid_qa_pair_rule_based(current_qa):
+            qa_pairs.append(self._finalize_qa_pair(current_qa))
         
         return qa_pairs
+
+    def _clean_content(self, content: str) -> str:
+        """清理内容文本"""
+        # 移除时间戳（支持中文和英文圆括号）
+        content = re.sub(r'[\(（][0-9]{4}[-/][0-9]{1,2}[-/][0-9]{1,2}[\)）]', '', content)
+        
+        # 移除多余的空白和换行
+        content = re.sub(r'\s+', ' ', content)
+        
+        # 移除开头的编号
+        content = re.sub(r'^\d+\.\s*', '', content)
+        
+        return content.strip()
+
+    def _is_valid_qa_pair_rule_based(self, qa: Dict[str, Any]) -> bool:
+        """验证问答对是否有效"""
+        if not qa or not qa.get('question') or not qa.get('answer'):
+            return False
+        
+        # 对原始文本进行基本清理后再验证
+        question = self._clean_content(qa['question'])
+        answer = self._clean_content(qa['answer'])
+        
+        # 基本长度检查
+        if len(question) < 5 or len(answer) < 5:
+            return False
+        
+        # 检查问题中是否包含回答者前缀（带冒号的格式，避免误判）
+        answerer_pattern = r'(段永平|段|大道|答|A)\s*[:：]'
+        if re.search(answerer_pattern, question):
+            return False
+        
+        # 检查答案中是否包含提问者前缀（带冒号的格式）
+        questioner_pattern = r'(网友|问|Q|记者|提问|主持人|观众)\s*[:：]'
+        if re.search(questioner_pattern, answer):
+            return False
+        
+        return True
+
+    def _finalize_qa_pair(self, qa: Dict[str, Any]) -> Dict[str, Any]:
+        """最终处理问答对"""
+        # 1. 先从原始文本中提取时间戳（必须在清理之前）
+        timestamp_pattern = r'[\(（]([0-9]{4}[-/][0-9]{1,2}[-/][0-9]{1,2})[\)）]'
+        timestamp_match = re.search(timestamp_pattern, qa.get('answer', ''))
+        if timestamp_match:
+            qa['timestamp'] = timestamp_match.group(1)
+        else:
+            # 也检查问题中是否有时间戳
+            timestamp_match = re.search(timestamp_pattern, qa.get('question', ''))
+            if timestamp_match:
+                qa['timestamp'] = timestamp_match.group(1)
+        
+        # 2. 然后再清理文本（移除时间戳等）
+        qa['question'] = self._clean_content(qa['question'])
+        qa['answer'] = self._clean_content(qa['answer'])
+        
+        # 3. 添加话题（简单实现）
+        text = qa['question'] + ' ' + qa['answer']
+        topics = []
+        investment_keywords = ['投资', '价值投资', '股票', '企业', '现金流', '护城河', '管理', '长期', '巴菲特', '估值', '财务', '分红', '商业模式', '竞争优势', '成长', '收益', '风险', '市场']
+        for keyword in investment_keywords:
+            if keyword in text:
+                topics.append(keyword)
+        
+        qa['topic'] = ','.join(topics[:3]) if topics else 'general'
+        qa['domain'] = 'general'
+        
+        return qa
     
     def _extract_with_llm(self, content: str, llm_client) -> List[Dict[str, Any]]:
         """使用LLM提取问答对"""
@@ -681,3 +773,25 @@ class QAExtractor:
         qa_pairs = self.extract_json(response)
         
         return qa_pairs 
+
+    def _is_questioner(self, speaker: str, questioner_prefixes: List[str]) -> bool:
+        """判断说话人是否为提问者"""
+        speaker_lower = speaker.lower()
+        for prefix in questioner_prefixes:
+            if (speaker_lower.startswith(prefix.lower()) or 
+                speaker_lower.endswith(prefix.lower()) or
+                f' {prefix.lower()}' in speaker_lower or
+                f'{prefix.lower()} ' in speaker_lower):
+                return True
+        return False
+    
+    def _is_answerer(self, speaker: str, answerer_prefixes: List[str]) -> bool:
+        """判断说话人是否为回答者"""
+        speaker_lower = speaker.lower()
+        for prefix in answerer_prefixes:
+            if (speaker_lower.startswith(prefix.lower()) or 
+                speaker_lower.endswith(prefix.lower()) or
+                f' {prefix.lower()}' in speaker_lower or
+                f'{prefix.lower()} ' in speaker_lower):
+                return True
+        return False 
