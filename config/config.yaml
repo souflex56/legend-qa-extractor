@@ -52,7 +52,12 @@ min_block_size: 200
 # 提取比例 (必填，默认: 1.0)
 # 处理块的比例，范围 0.0-1.0
 # 建议：快速测试使用 0.1 (10%)，完整处理使用 1.0 (100%)
-extract_ratio: 0.05
+extract_ratio: 1
+
+# 采样策略 (可选，默认: sequential)
+# sequential: 从头开始的顺序采样
+# random: 随机采样
+sampling_strategy: "sequential"
 
 # ==================== 语义分组配置 (Semantic Grouping) ====================
 # 高级配置项 - 智能语义分组功能
@@ -70,6 +75,34 @@ semantic_grouping:
   # 标准差系数 (可选，默认: 0.5)
   # 用于动态阈值计算：threshold = avg - std_factor * std
   std_factor: 0.5
+  
+  # 🚀 高置信度分组的特殊size限制
+  # 高置信度块的最小size (可选，默认: 100)
+  # 由于严格的一问一答质量很高，可以允许更小的size
+  high_confidence_min_size: 10
+  
+  # 高置信度块的最大size (可选，默认: 2000)
+  # 高置信度块可以允许更大的size，因为质量有保证
+  high_confidence_max_size: 1000
+  
+  # 🚀 模型配置（来自SemanticProcessor）
+  # 模型名称 (可选，默认: paraphrase-multilingual-MiniLM-L12-v2)
+  model_name: "paraphrase-multilingual-MiniLM-L12-v2"
+  
+  # 设备配置 (可选，默认: None，自动选择)
+  # 可选值: None, 'cpu', 'cuda', 'mps'
+  device: null
+
+# 🚀 过滤级别配置（来自SemanticProcessor）
+# 过滤级别 (可选，默认: balanced)
+# strict: 只返回高置信度组
+# balanced: 返回高置信度和中置信度组
+# none: 返回所有组（包括低置信度）
+filtering_level: "none"
+
+# 语义相似度阈值 (可选，默认: 0.5)
+# 用于语义分组时的相似度判断
+semantic_threshold: 0.5
 
 # ==================== 长答案处理配置 (Long Answer Processing) ====================
 # 高级配置项 - 链式摘要与风险控制
@@ -109,6 +142,7 @@ max_prompt_tokens: 6000
 # 启用 Token 监控 (可选，默认: true)
 # 自动监控和报告 Token 使用情况，帮助优化配置
 enable_token_monitoring: true
+
 
 # ==================== QA 过滤配置 (QA Filtering Configuration) ====================
 # 可选配置项 - 提高处理效率

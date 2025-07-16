@@ -6,6 +6,7 @@ import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Optional
 from tqdm import tqdm
+import time
 
 from .config import Config
 from .core import PDFProcessor, TextProcessor, QAExtractor, LLMClient
@@ -54,6 +55,8 @@ class QAExtractionProcessor:
         
         # Initialize Semantic Grouper
         self.semantic_grouper = SemanticGrouper(config.to_dict())
+        
+
         
         # **🚀 PERFORMANCE: Batch processing configuration**
         self.batch_size = getattr(config, 'batch_size', 5)  # Default batch size
@@ -140,8 +143,17 @@ class QAExtractionProcessor:
         # Apply sampling ratio - 现在操作的是包含元数据的块字典列表
         if self.config.extract_ratio < 1.0:
             sample_size = max(int(len(processed_blocks_data) * self.config.extract_ratio), 1)
-            processed_blocks_data = processed_blocks_data[:sample_size]
-            self.logger.info(f"⚡ Applied sampling ratio: {len(processed_blocks_data)} blocks selected")
+            
+            # 根据采样策略选择blocks
+            if getattr(self.config, 'sampling_strategy', 'sequential') == 'random':
+                import random
+                # 随机采样
+                processed_blocks_data = random.sample(processed_blocks_data, sample_size)
+                self.logger.info(f"⚡ Applied random sampling ratio: {len(processed_blocks_data)} blocks selected")
+            else:
+                # 顺序采样（从头开始）
+                processed_blocks_data = processed_blocks_data[:sample_size]
+                self.logger.info(f"⚡ Applied sequential sampling ratio: {len(processed_blocks_data)} blocks selected")
         
         if not processed_blocks_data:
             self.logger.warning("⚠️ No valid blocks found for processing")
@@ -159,6 +171,8 @@ class QAExtractionProcessor:
         with open(output_path, "w", encoding="utf-8") as f:
             pass
         
+
+        
         # Process blocks and extract Q&A pairs
         self.logger.info(f"🤖 Processing {len(processed_blocks_data)} blocks with LLM...")
         results = self._process_blocks(processed_blocks_data, output_path, self.config.enable_llm_anchor)
@@ -169,6 +183,8 @@ class QAExtractionProcessor:
         # Add confidence-based processing statistics
         confidence_stats = self._analyze_confidence_processing(results, processed_blocks_data)
         stats.update(confidence_stats)
+        
+
         
         self.logger.info(f"🎉 Processing completed! Extracted {stats['qa_pairs_extracted']} Q&A pairs")
         self.logger.info(f"📊 Confidence-based processing stats:")
@@ -337,6 +353,8 @@ class QAExtractionProcessor:
         Returns:
             Processing result for the block
         """
+        start_time = time.time()
+        
         try:
             # Extract block content and metadata
             block_content = block_data["content"]
@@ -368,10 +386,12 @@ class QAExtractionProcessor:
             if confidence == 'high':
                 # 高置信度块：直接使用规则提取，无需LLM
                 self.logger.debug(f"Processing high confidence block {block_idx + 1} with rule-based extraction")
+                
                 qa_pairs = self.qa_extractor._extract_from_high_confidence_block(processed_block)
             elif confidence == 'medium':
                 # 中置信度块：使用完整LLM处理，但温度稍低
                 self.logger.debug(f"Processing medium confidence block {block_idx + 1} with LLM (conservative)")
+                
                 response = self.llm_client.call_ollama(
                     prompt, 
                     temperature=max(0.05, self.config.temperature - 0.05)  # 稍微降低温度
@@ -415,6 +435,7 @@ class QAExtractionProcessor:
                     if self.config.skip_low_confidence:
                         # 如果配置了跳过低置信度块
                         self.logger.info(f"Skipping low confidence block {block_idx + 1} due to skip_low_confidence setting")
+                        
                         return {
                             'block_idx': block_idx,
                             'success': True,
@@ -511,6 +532,7 @@ class QAExtractionProcessor:
                     f"Unexpected error in block {block_idx + 1}: {e}\n"
                     f"Block content:\n{block_data.get('content', 'N/A')}"
                 )
+            
             return {
                 'block_idx': block_idx,
                 'success': False,

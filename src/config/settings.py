@@ -25,6 +25,7 @@ class Config:
     max_block_size: int = 1000
     min_block_size: int = 200
     extract_ratio: float = 1.0
+    sampling_strategy: str = "sequential"  # "sequential" or "random"
     
     # Semantic grouping configuration
     semantic_grouping: dict = None
@@ -39,6 +40,8 @@ class Config:
     # Token management configuration
     max_prompt_tokens: int = 6000
     enable_token_monitoring: bool = True  # 启用自动token监控和报告
+
+
     
     # QA filtering
     enable_qa_filter: bool = True
