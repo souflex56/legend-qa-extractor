@@ -14,7 +14,7 @@ pdf_filename: "uploaded.pdf"
 
 # 输出文件名 (必填)
 # 生成的 QA 对将保存到此文件，格式为 JSONL
-output_filename: "output_final_qa_chunkwise_0.02.jsonl"
+output_filename: "output_final_qa_smart-chunk.jsonl"
 
 # 输出目录 (必填)
 # 所有输出文件（包括日志）将保存到此目录
@@ -52,7 +52,7 @@ min_block_size: 200
 # 提取比例 (必填，默认: 1.0)
 # 处理块的比例，范围 0.0-1.0
 # 建议：快速测试使用 0.1 (10%)，完整处理使用 1.0 (100%)
-extract_ratio: 0.05
+extract_ratio: 1
 
 # ==================== 语义分组配置 (Semantic Grouping) ====================
 # 高级配置项 - 智能语义分组功能
