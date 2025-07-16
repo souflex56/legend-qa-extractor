@@ -69,9 +69,10 @@ class SemanticGrouper:
             self.logger.error(f"You may need to run: pip install -U sentence-transformers")
             raise e
         
-        # 高置信度问答模式（规则预筛选）
-        # 分为问题模式和答案模式
+        # 🔥 大幅扩展问答模式识别范围
+        # 问题模式 - 支持更多格式变体
         self.question_patterns = [
+            # 基础模式
             r"网友[：:]",
             r"记者[：:]",
             r"问[：:]",
@@ -79,28 +80,63 @@ class SemanticGrouper:
             r"提问[：:]",
             r"主持人[：:]",
             r"观众[：:]",
-            r"Q[：:]"
+            r"Q[：:]",
+            # 🚀 新增：编号前缀模式
+            r"\d+\.\s*网友[：:]",
+            r"\d+\.\s*记者[：:]", 
+            r"\d+\.\s*问[：:]",
+            r"\d+\.\s*主持人[：:]",
+            r"\d+\.\s*观众[：:]",
+            # 🚀 新增：带标识符模式
+            r"网友[A-Za-z0-9]*[：:]",
+            r"记者[A-Za-z0-9]*[：:]",
+            r"观众[A-Za-z0-9]*[：:]",
+            # 🚀 新增：间接引用模式
+            r"有人问[：:]",
+            r"有朋友问[：:]",
+            r"有网友问[：:]",
+            r"文章引用[：:]",
+            r"引用[：:]",
+            r"有人说[：:]",
+            r"有观点认为[：:]",
+            # 🚀 新增：自然语言问句模式
+            r".*[？?]$",  # 以问号结尾
         ]
         
+        # 答案模式 - 支持更多回答者变体
         self.answer_patterns = [
+            # 基础模式
             r"段永平[：:]",
             r"段[：:]",
             r"A[：:]",
             r"答[：:]",
-            r"回答[：:]"
+            r"回答[：:]",
+            # 🚀 新增：带编号的答案模式
+            r"\d+\.\s*段永平[：:]",
+            r"\d+\.\s*段[：:]",
+            # 🚀 新增：其他可能的回答者标识
+            r"大道[：:]",
+            r"老段[：:]",
+            # 🚀 新增：更灵活的段永平标识
+            r"段\s*永\s*平[：:]",
         ]
         
         # 所有QA模式（用于兼容性）
         self.high_confidence_qa_patterns = self.question_patterns + self.answer_patterns
         
-        # 潜在问题模式
+        # 🔥 增强潜在问题模式
         self.potential_question_patterns = [
             r".*[？?]$",  # 以问号结尾
             r"^(什么|为什么|怎么|如何|是否|有没有|能不能)",  # 疑问词开头
             r"(是什么|为什么|怎么样|如何|吗|呢)[？?]?$",  # 疑问词结尾
+            # 🚀 新增：更多问句模式
+            r".*想问.*",
+            r".*请教.*",
+            r".*想了解.*",
+            r".*求解.*",
         ]
         
-        self.logger.info("Semantic Grouper initialized successfully")
+        self.logger.info("Semantic Grouper initialized successfully with enhanced pattern recognition")
     
     def _init_jieba(self):
         """初始化jieba分词器，添加自定义词典"""
@@ -198,12 +234,16 @@ class SemanticGrouper:
     def _rule_based_prescreening(self, paragraphs: List[str]) -> Tuple[List[Dict], List[int]]:
         """
         规则预筛选：快速识别高置信度问答对
-        改进策略：只拼接严格的一问一答（各自带前缀的单段落）
-        其他情况自动划分为中置信度，由LLM处理
+        🔥 改进策略：更宽松的问答匹配，支持不完美格式
+        1. 扩大搜索范围，不仅限于严格的一问一答
+        2. 支持编号前缀和格式变体
+        3. 允许问题和答案之间有间隔段落
         返回：(高置信度块列表, 需要进一步处理的段落索引列表)
         """
         high_confidence_blocks = []
         used_indices = set()
+        
+        self.logger.info(f"🔍 Starting rule-based prescreening for {len(paragraphs)} paragraphs")
         
         i = 0
         while i < len(paragraphs):
@@ -213,90 +253,103 @@ class SemanticGrouper:
                 
             para = paragraphs[i].strip()
             
-            # 检查是否是问题开始
-            is_question = any(re.search(pattern, para) for pattern in self.question_patterns)
+            # 🔥 改进：更灵活的问题识别
+            is_question = self._is_flexible_question(para)
             
             if is_question:
-                # 找到问题，寻找紧邻的答案段落
-                qa_content = [para]
-                used_indices.add(i)
-                j = i + 1
+                self.logger.debug(f"Found potential question at index {i}: {para[:50]}...")
                 
-                # 寻找紧邻的答案段落（只找下一个段落）
+                # 🔥 扩大搜索范围：向前找最多5个段落
+                qa_content = [para]
+                qa_indices = [i]
+                used_indices.add(i)
+                
+                # 🔥 更宽松的答案搜索策略
                 answer_found = False
-                while j < len(paragraphs) and j < i + 3:  # 限制搜索范围，只找紧邻的
+                search_range = min(len(paragraphs), i + 6)  # 扩大搜索范围到5个段落
+                
+                for j in range(i + 1, search_range):
                     if j in used_indices:
-                        j += 1
                         continue
                         
                     next_para = paragraphs[j].strip()
                     
-                    # 🚀 新策略：遇到新问题立即停止
-                    is_new_question = any(re.search(pattern, next_para) for pattern in self.question_patterns)
-                    if is_new_question:
-                        self.logger.debug(f"Found new question at index {j}, stopping current QA collection")
+                    # 检查是否是新问题（如果是，停止搜索）
+                    if self._is_flexible_question(next_para) and j > i + 1:
+                        self.logger.debug(f"Found new question at index {j}, stopping search")
                         break
                     
-                    # 检查是否是答案
-                    is_answer = any(re.search(pattern, next_para) for pattern in self.answer_patterns)
+                    # 🔥 更灵活的答案识别
+                    is_answer = self._is_flexible_answer(next_para)
                     
                     if is_answer:
-                        # 🚀 新策略：只拼接严格的一问一答
+                        # 找到答案，收集这个答案
                         qa_content.append(next_para)
+                        qa_indices.append(j)
                         used_indices.add(j)
                         answer_found = True
+                        self.logger.debug(f"Found answer at index {j}: {next_para[:50]}...")
                         
-                        # 🚀 不再收集后续内容，保持纯净的一问一答
-                        self.logger.debug(f"Found strict QA pair: question at {i}, answer at {j}")
+                        # 🔥 新策略：继续收集后续的相关答案段落
+                        # 检查下一个段落是否是同一回答者的补充
+                        k = j + 1
+                        while k < search_range and k < j + 3:  # 最多再收集2个相关段落
+                            if k in used_indices:
+                                k += 1
+                                continue
+                                
+                            next_next_para = paragraphs[k].strip()
+                            
+                            # 如果遇到新问题，停止
+                            if self._is_flexible_question(next_next_para):
+                                break
+                            
+                            # 如果是明显的答案补充（不带前缀但相关），则收集
+                            if (not self._is_flexible_answer(next_next_para) and 
+                                not self._is_flexible_question(next_next_para) and
+                                len(next_next_para) > 20):  # 有一定长度的非问答段落
+                                qa_content.append(next_next_para)
+                                qa_indices.append(k)
+                                used_indices.add(k)
+                                self.logger.debug(f"Collected supplement at index {k}: {next_next_para[:30]}...")
+                            else:
+                                break
+                            k += 1
                         break
                     
-                    # 如果不是答案，跳过这个段落，继续寻找
-                    j += 1
+                    # 🔥 如果段落很短且不是明显的问题/答案，可能是中间的描述文字，收集它
+                    elif len(next_para) < 100 and not self._is_flexible_question(next_para):
+                        qa_content.append(next_para)
+                        qa_indices.append(j)
+                        used_indices.add(j)
+                        self.logger.debug(f"Collected intermediate text at index {j}: {next_para[:30]}...")
                 
-                # 如果找到了严格的一问一答，创建高置信度块
-                if answer_found:
+                # 创建问答块（无论是否找到严格的答案）
+                if len(qa_content) > 1 or answer_found:  # 至少有问题+其他内容，或明确找到答案
                     content = "\n\n".join(qa_content)
                     content_size = len(content)
                     
-                    # 🚀 使用高置信度分组的特殊size限制
-                    if content_size >= self.high_confidence_min_size and content_size <= self.high_confidence_max_size:
+                    # 🔥 更宽松的块大小判断
+                    confidence = 'high' if answer_found else 'medium'
+                    block_type = 'rule_based_strict' if answer_found else 'rule_based_loose'
+                    
+                    if content_size >= 50:  # 降低最小限制
                         high_confidence_blocks.append({
                             'content': content,
-                            'confidence': 'high',
-                            'type': 'rule_based_strict',
-                            'indices': sorted(list(used_indices))
+                            'confidence': confidence,
+                            'type': block_type,
+                            'indices': sorted(qa_indices),
+                            'has_answer': answer_found
                         })
-                        self.logger.debug(f"Created strict high-confidence block: {content_size} chars")
-                    elif content_size > self.high_confidence_max_size:
-                        # 如果超过高置信度最大限制，仍然保留但标记需要分割
-                        self.logger.warning(f"High-confidence block too large ({content_size} chars), will be split later")
-                        high_confidence_blocks.append({
-                            'content': content,
-                            'confidence': 'high',
-                            'type': 'rule_based_strict',
-                            'indices': sorted(list(used_indices))
-                        })
+                        self.logger.debug(f"Created {confidence} confidence block: {content_size} chars, indices {qa_indices}")
                     else:
-                        # 🚀 即使小于最小限制，也保留高置信度块（因为严格的一问一答质量很高）
-                        if content_size >= 50:  # 绝对最小限制
-                            high_confidence_blocks.append({
-                                'content': content,
-                                'confidence': 'high',
-                                'type': 'rule_based_strict_small',
-                                'indices': sorted(list(used_indices))
-                            })
-                            self.logger.debug(f"Created small but strict high-confidence block: {content_size} chars")
-                        else:
-                            # 太小，标记为未使用，让后续处理
-                            self.logger.debug(f"High-confidence block too small ({content_size} chars), skipping")
-                            # 创建副本避免在迭代时修改集合
-                            indices_to_remove = list(used_indices)
-                            for idx in indices_to_remove:
-                                used_indices.discard(idx)
+                        # 太小，释放索引让后续处理
+                        self.logger.debug(f"Block too small ({content_size} chars), releasing indices")
+                        for idx in qa_indices:
+                            used_indices.discard(idx)
                 else:
-                    # 🚀 新策略：如果没找到严格的一问一答，释放已使用的索引
-                    # 让语义分组器处理这种情况
-                    self.logger.debug(f"No strict QA pair found for question at index {i}, releasing indices")
+                    # 只有问题没有其他内容，释放索引
+                    self.logger.debug(f"Only question found, no additional content, releasing index {i}")
                     used_indices.discard(i)
             
             i += 1
@@ -304,8 +357,54 @@ class SemanticGrouper:
         # 收集未使用的段落索引
         remaining_indices = [idx for idx in range(len(paragraphs)) if idx not in used_indices]
         
-        self.logger.info(f"Rule-based prescreening: {len(high_confidence_blocks)} strict high-confidence blocks found")
+        self.logger.info(f"Rule-based prescreening completed:")
+        self.logger.info(f"  - High/Medium confidence blocks: {len(high_confidence_blocks)}")
+        self.logger.info(f"  - Remaining paragraphs for semantic processing: {len(remaining_indices)}")
+        
         return high_confidence_blocks, remaining_indices
+    
+    def _is_flexible_question(self, paragraph: str) -> bool:
+        """
+        🔥 更灵活的问题识别
+        支持多种格式变体和间接问法
+        """
+        if not paragraph:
+            return False
+        
+        # 清理段落（移除编号前缀）
+        clean_para = re.sub(r'^\d+\.\s*', '', paragraph).strip()
+        
+        # 检查是否匹配问题模式
+        for pattern in self.question_patterns:
+            if re.search(pattern, paragraph):
+                return True
+        
+        # 🔥 新增：检查是否是自然语言问句
+        if re.search(r'[？?]$', clean_para):
+            return True
+            
+        # 🔥 新增：检查疑问词开头
+        question_words = ['什么', '为什么', '怎么', '如何', '是否', '有没有', '能不能', '会不会', '应该', '想问', '请教']
+        for word in question_words:
+            if clean_para.startswith(word) or f'想{word}' in clean_para:
+                return True
+        
+        return False
+    
+    def _is_flexible_answer(self, paragraph: str) -> bool:
+        """
+        🔥 更灵活的答案识别
+        支持多种回答者标识和格式变体
+        """
+        if not paragraph:
+            return False
+        
+        # 检查是否匹配答案模式
+        for pattern in self.answer_patterns:
+            if re.search(pattern, paragraph):
+                return True
+        
+        return False
     
     def _group_by_rules_conservative(self, paragraphs: List[str]) -> Tuple[List[str], List[int]]:
         """
@@ -612,17 +711,18 @@ class SemanticGrouper:
         1. 规则预筛选
         2. 语义动态分组
         3. 块优化和合并
-        使用简化的跟踪器记录处理过程
+        🔥 增强版本：添加详细的调试信息和处理报告
         """
         if not paragraphs:
             return []
         
-        self.logger.info(f"Starting semantic grouping for {len(paragraphs)} paragraphs")
+        self.logger.info(f"🚀 Starting semantic grouping for {len(paragraphs)} paragraphs")
+        
+        # 🔥 调试信息：输出原始段落信息
+        self._log_paragraph_analysis(paragraphs)
         
         # 第一层：规则预筛选
         high_confidence_blocks, remaining_indices = self._rule_based_prescreening(paragraphs)
-        
-
         
         # 第二层：语义动态分组（处理剩余段落）
         semantic_blocks = []
@@ -635,71 +735,102 @@ class SemanticGrouper:
         # 第三层：优化和合并
         optimized_blocks = self._merge_and_optimize_blocks(all_blocks)
         
-        self.logger.info(f"Semantic grouping completed: {len(optimized_blocks)} final blocks")
-        
-        # 添加统计信息
-        high_conf_count = sum(1 for b in optimized_blocks if b.get('confidence') == 'high')
-        medium_conf_count = sum(1 for b in optimized_blocks if b.get('confidence') == 'medium')
-        low_conf_count = sum(1 for b in optimized_blocks if b.get('confidence') == 'low')
-        
-        self.logger.info(f"Block confidence distribution - High: {high_conf_count}, Medium: {medium_conf_count}, Low: {low_conf_count}")
+        # 🔥 调试信息：输出最终统计报告
+        self._log_grouping_summary(paragraphs, optimized_blocks, remaining_indices)
         
         return optimized_blocks
     
-    def group_text_by_semantics(self, text: str, config: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def _log_paragraph_analysis(self, paragraphs: List[str]) -> None:
         """
-        兼容SemanticProcessor的接口方法
-        处理原始文本，返回语义分组结果
+        🔥 输出段落分析的详细信息
+        """
+        self.logger.info("📊 Paragraph Analysis:")
+        self.logger.info(f"  Total paragraphs: {len(paragraphs)}")
         
-        Args:
-            text: 原始文本
-            config: 配置参数（可选，会与初始化时的配置合并）
+        # 分析段落类型
+        question_count = 0
+        answer_count = 0
+        other_count = 0
+        
+        for i, para in enumerate(paragraphs):
+            if self._is_flexible_question(para):
+                question_count += 1
+                self.logger.debug(f"  P{i+1:02d} [QUESTION]: {para[:80]}...")
+            elif self._is_flexible_answer(para):
+                answer_count += 1
+                self.logger.debug(f"  P{i+1:02d} [ANSWER  ]: {para[:80]}...")
+            else:
+                other_count += 1
+                self.logger.debug(f"  P{i+1:02d} [OTHER   ]: {para[:80]}...")
+        
+        self.logger.info(f"  - Questions detected: {question_count}")
+        self.logger.info(f"  - Answers detected: {answer_count}")
+        self.logger.info(f"  - Other paragraphs: {other_count}")
+        
+        # 长度分析
+        lengths = [len(para) for para in paragraphs]
+        avg_length = sum(lengths) / len(lengths) if lengths else 0
+        self.logger.info(f"  - Average paragraph length: {avg_length:.1f} chars")
+        self.logger.info(f"  - Length range: {min(lengths)}-{max(lengths)} chars")
+    
+    def _log_grouping_summary(self, original_paragraphs: List[str], final_blocks: List[Dict], remaining_indices: List[int]) -> None:
+        """
+        🔥 输出分组过程的详细统计报告
+        """
+        self.logger.info("📈 Semantic Grouping Summary:")
+        self.logger.info("=" * 50)
+        
+        # 基本统计
+        total_chars = sum(len(para) for para in original_paragraphs)
+        processed_chars = sum(len(block['content']) for block in final_blocks)
+        
+        self.logger.info(f"📊 Processing Statistics:")
+        self.logger.info(f"  - Input paragraphs: {len(original_paragraphs)}")
+        self.logger.info(f"  - Output blocks: {len(final_blocks)}")
+        self.logger.info(f"  - Total input chars: {total_chars:,}")
+        self.logger.info(f"  - Total processed chars: {processed_chars:,}")
+        self.logger.info(f"  - Processing coverage: {(processed_chars/total_chars)*100:.1f}%")
+        
+        # 置信度分布
+        confidence_stats = {}
+        type_stats = {}
+        
+        for block in final_blocks:
+            conf = block.get('confidence', 'unknown')
+            type_name = block.get('type', 'unknown')
             
-        Returns:
-            分组结果列表，每个元素包含content和type
-        """
-        if not text:
-            return []
+            confidence_stats[conf] = confidence_stats.get(conf, 0) + 1
+            type_stats[type_name] = type_stats.get(type_name, 0) + 1
         
-        # 合并配置
-        if config:
-            merged_config = self.config.copy()
-            merged_config.update(config)
-            # 临时更新实例变量
-            self.filtering_level = merged_config.get('filtering_level', self.filtering_level)
-            self.semantic_threshold = merged_config.get('semantic_threshold', self.semantic_threshold)
-        else:
-            merged_config = self.config
+        self.logger.info(f"🎯 Confidence Distribution:")
+        for conf, count in sorted(confidence_stats.items()):
+            percentage = (count / len(final_blocks)) * 100 if final_blocks else 0
+            self.logger.info(f"  - {conf.title()}: {count} blocks ({percentage:.1f}%)")
         
-        # 1. 分割文本为段落
-        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        self.logger.info(f"🔧 Block Types:")
+        for type_name, count in sorted(type_stats.items()):
+            percentage = (count / len(final_blocks)) * 100 if final_blocks else 0
+            self.logger.info(f"  - {type_name}: {count} blocks ({percentage:.1f}%)")
         
-        # 2. 第一轮：使用保守规则识别高置信度组
-        rule_based_groups, remaining_indices = self._group_by_rules_conservative(paragraphs)
+        # 块大小分析
+        if final_blocks:
+            block_sizes = [len(block['content']) for block in final_blocks]
+            avg_size = sum(block_sizes) / len(block_sizes)
+            
+            self.logger.info(f"📏 Block Size Analysis:")
+            self.logger.info(f"  - Average size: {avg_size:.1f} chars")
+            self.logger.info(f"  - Size range: {min(block_sizes)}-{max(block_sizes)} chars")
+            self.logger.info(f"  - Blocks under {self.min_block_size}: {sum(1 for s in block_sizes if s < self.min_block_size)}")
+            self.logger.info(f"  - Blocks over {self.max_block_size}: {sum(1 for s in block_sizes if s > self.max_block_size)}")
         
-        # 3. 处理不同的过滤级别
-        if self.filtering_level == 'strict':
-            self.logger.info(f"Filtering level is 'strict'. Returning {len(rule_based_groups)} high-confidence groups.")
-            return [{"content": group, "type": "high-confidence"} for group in rule_based_groups]
+        # 🔥 详细的块信息（如果启用DEBUG级别）
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("🔍 Detailed Block Information:")
+            for i, block in enumerate(final_blocks):
+                size = len(block['content'])
+                conf = block.get('confidence', 'unknown')
+                type_name = block.get('type', 'unknown')
+                self.logger.debug(f"  Block {i+1:02d}: {size:4d} chars, {conf:7s}, {type_name}")
+                self.logger.debug(f"    Content preview: {block['content'][:100]}...")
         
-        # 对于 'balanced' 和 'none'，需要处理剩余段落
-        remaining_paragraphs = [paragraphs[i] for i in remaining_indices]
-        
-        # 4. 第二轮：使用语义相似度识别中置信度组
-        semantic_groups, ungrouped_paras = self._group_by_semantics_simple(
-            remaining_paragraphs,
-            merged_config.get('max_question_length', self.max_question_length),
-            merged_config.get('semantic_threshold', self.semantic_threshold)
-        )
-        
-        # 5. 合并和最终化组
-        all_groups = []
-        all_groups.extend([{"content": group, "type": "high-confidence"} for group in rule_based_groups])
-        all_groups.extend([{"content": group, "type": "medium-confidence"} for group in semantic_groups])
-        
-        if self.filtering_level == 'none':
-            # 添加所有剩余段落作为低置信度组
-            all_groups.extend([{"content": para, "type": "low-confidence"} for para in ungrouped_paras])
-        
-        self.logger.info(f"Total groups created: {len(all_groups)} (High: {len(rule_based_groups)}, Medium: {len(semantic_groups)}, Low: {len(ungrouped_paras) if self.filtering_level == 'none' else 0})")
-        return all_groups 
+        self.logger.info("=" * 50) 

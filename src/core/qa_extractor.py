@@ -545,6 +545,7 @@ class QAExtractor:
     def process_groups(self, groups: List[Dict[str, Any]], llm_client) -> List[Dict[str, Any]]:
         """
         处理语义分组后的块，支持长答案处理
+        🔥 改进版本：支持更多置信度级别和灵活处理策略
         
         Args:
             groups: 语义分组后的块列表
@@ -560,15 +561,34 @@ class QAExtractor:
                 group_content = group['content']
                 confidence = group.get('confidence', 'unknown')
                 
-                # 根据置信度决定处理策略
+                self.logger.debug(f"Processing group {group_idx + 1}/{len(groups)} - confidence: {confidence}")
+                
+                # 🔥 根据置信度决定处理策略
                 if confidence == 'high':
-                    # 高置信度块，直接提取
-                    self.logger.debug(f"Processing high confidence group {group_idx}")
+                    # 高置信度块：直接使用规则提取
+                    self.logger.debug(f"Processing high confidence group {group_idx} with rule-based extraction")
                     qa_pairs = self._extract_from_high_confidence_block(group_content)
+                    
+                elif confidence == 'medium':
+                    # 🔥 中置信度块：先尝试规则提取，再用LLM补充
+                    self.logger.debug(f"Processing medium confidence group {group_idx} with hybrid approach")
+                    
+                    # 先尝试规则提取
+                    rule_pairs = self._extract_from_high_confidence_block(group_content)
+                    
+                    if rule_pairs:
+                        # 如果规则提取成功，使用规则结果
+                        qa_pairs = rule_pairs
+                        self.logger.debug(f"Medium confidence block processed successfully with rules: {len(rule_pairs)} pairs")
+                    else:
+                        # 如果规则提取失败，使用LLM处理
+                        self.logger.debug(f"Medium confidence block fallback to LLM processing")
+                        qa_pairs = self._extract_with_llm_enhanced(group_content, llm_client, confidence)
+                
                 else:
-                    # 中低置信度块，使用LLM提取
-                    self.logger.debug(f"Processing {confidence} confidence group {group_idx}")
-                    qa_pairs = self._extract_with_llm(group_content, llm_client)
+                    # 低置信度块：使用改进的LLM处理
+                    self.logger.debug(f"Processing {confidence} confidence group {group_idx} with enhanced LLM")
+                    qa_pairs = self._extract_with_llm_enhanced(group_content, llm_client, confidence)
                 
                 # 处理长答案
                 for pair in qa_pairs:
@@ -585,25 +605,32 @@ class QAExtractor:
                     pair['source_confidence'] = confidence
                     pair['source_type'] = group.get('type', 'unknown')
                     pair['domain'] = group.get('domain', 'general')
+                    pair['group_index'] = group_idx
                 
                 all_qa_pairs.extend(qa_pairs)
+                
+                if qa_pairs:
+                    self.logger.info(f"✅ Group {group_idx + 1}: Extracted {len(qa_pairs)} Q&A pairs (confidence: {confidence})")
+                else:
+                    self.logger.debug(f"❌ Group {group_idx + 1}: No Q&A pairs extracted (confidence: {confidence})")
                 
             except Exception as e:
                 self.logger.error(f"Error processing group {group_idx}: {e}")
                 continue
         
+        self.logger.info(f"Total QA pairs extracted: {len(all_qa_pairs)}")
         return all_qa_pairs
     
     def _extract_from_high_confidence_block(self, content: str) -> List[Dict[str, Any]]:
         """
-        从高置信度块中提取问答对（基于规则）- 改进版本
+        从高置信度块中提取问答对（基于规则）- 大幅改进版本
         
         主要改进：
-        1. 更精确的前缀匹配
-        2. 处理编号和时间戳
-        3. 质量验证
-        4. 内容清理
-        5. 支持带标识符的说话人模式（如"网友O"、"A 网友"、"记者 A"等）
+        1. 🔥 更完整的问答对识别：确保不遗漏任何问答对
+        2. 🔥 支持多种问答组合模式：问-答、问-问-答、问-答-答等
+        3. 🔥 改进配对逻辑：更智能的问答配对策略
+        4. 质量验证和内容清理
+        5. 支持带标识符的说话人模式
         """
         
         # 定义说话人前缀（可扩展）
@@ -613,10 +640,7 @@ class QAExtractor:
         # 预处理：去除编号前缀（如"08. 网友："）
         content = re.sub(r'(?:^|\n)\d+\.\s*', '\n', content, flags=re.MULTILINE)
         
-        # 构建更精确的正则表达式，支持多种说话人模式：
-        # 1. 基本模式：网友：
-        # 2. 前缀+标识符：网友O：, 网友A：, 记者123：
-        # 3. 标识符+前缀：A 网友：, sam 观众：
+        # 构建更精确的正则表达式
         questioner_patterns = []
         answerer_patterns = []
         
@@ -627,9 +651,7 @@ class QAExtractor:
             questioner_patterns.append(f'[A-Za-z0-9\u4e00-\u9fa5]+\\s+{re.escape(prefix)}')
         
         for prefix in answerer_prefixes:
-            # 模式1: 前缀 + 可选空格 + 可选标识符
             answerer_patterns.append(f'{re.escape(prefix)}\\s*[A-Za-z0-9\u4e00-\u9fa5]*')
-            # 模式2: 标识符 + 空格 + 前缀  
             answerer_patterns.append(f'[A-Za-z0-9\u4e00-\u9fa5]+\\s+{re.escape(prefix)}')
         
         all_patterns = questioner_patterns + answerer_patterns
@@ -637,57 +659,112 @@ class QAExtractor:
         # 匹配：行首或换行后的说话人模式，后面跟冒号
         pattern = re.compile(f'(?:^|\\n)\\s*({"|".join(all_patterns)})\\s*[:：]', re.MULTILINE)
         
-        # 使用finditer而不是split，获得更多控制
         matches = list(pattern.finditer(content))
         
         if not matches:
             return []
         
-        qa_pairs = []
-        current_qa = {}
-        
+        # 🔥 改进：先收集所有的对话段
+        segments = []
         for i, match in enumerate(matches):
             speaker = match.group(1).strip()
-            
-            # 确定内容的开始和结束位置
             content_start = match.end()
             content_end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
-            
             content_text = content[content_start:content_end].strip()
             
-            # 注意：这里不立即清理内容，保留原始文本用于后续时间戳提取
-            if not content_text.strip():
-                continue
+            if content_text.strip():
+                segments.append({
+                    'speaker': speaker,
+                    'content': content_text,
+                    'is_questioner': self._is_questioner(speaker, questioner_prefixes),
+                    'is_answerer': self._is_answerer(speaker, answerer_prefixes),
+                    'position': i
+                })
+        
+        # 🔥 改进：智能配对逻辑
+        qa_pairs = []
+        i = 0
+        while i < len(segments):
+            segment = segments[i]
             
-            # 判断说话人类型
-            is_questioner = self._is_questioner(speaker, questioner_prefixes)
-            is_answerer = self._is_answerer(speaker, answerer_prefixes)
-                
-            # 处理问题
-            if is_questioner:
-                # 保存上一个问答对
-                if self._is_valid_qa_pair_rule_based(current_qa):
-                    qa_pairs.append(self._finalize_qa_pair(current_qa))
-                
-                # 开始新的问答对，存储原始内容
+            # 如果当前段是问题
+            if segment['is_questioner']:
                 current_qa = {
-                    "question": content_text,
+                    "question": segment['content'],
                     "answer": "",
-                    "source_confidence": "high",
-                    "source_type": "rule_based"
+                    "source_confidence": "high", 
+                    "source_type": "rule_based_strict"
                 }
-            
-            # 处理回答
-            elif is_answerer and 'question' in current_qa:
-                if current_qa.get("answer"):
-                    current_qa["answer"] += "\n\n" + content_text
+                
+                # 🔥 寻找对应的答案：在接下来的段落中寻找
+                answer_found = False
+                j = i + 1
+                
+                # 最多向前查找3个段落寻找答案
+                while j < len(segments) and j < i + 4:
+                    next_segment = segments[j]
+                    
+                    # 如果找到答案者的发言
+                    if next_segment['is_answerer']:
+                        current_qa["answer"] = next_segment['content']
+                        answer_found = True
+                        
+                        # 🔥 检查是否有后续的补充答案（同一回答者的继续发言）
+                        k = j + 1
+                        while k < len(segments) and k < j + 3:
+                            follow_up = segments[k]
+                            # 如果下一段还是答案者，或者是无标识的文本（可能是答案的延续）
+                            if (follow_up['is_answerer'] or 
+                                (not follow_up['is_questioner'] and not follow_up['is_answerer'] and 
+                                 len(follow_up['content']) > 20)):
+                                current_qa["answer"] += "\n\n" + follow_up['content']
+                                k += 1
+                            else:
+                                break
+                        
+                        break
+                    
+                    # 如果遇到新的问题，停止寻找答案
+                    elif next_segment['is_questioner']:
+                        break
+                    
+                    j += 1
+                
+                # 🔥 如果找到了有效的问答对，添加到结果中
+                if answer_found and self._is_valid_qa_pair_rule_based(current_qa):
+                    qa_pairs.append(self._finalize_qa_pair(current_qa))
+                    self.logger.debug(f"Successfully extracted Q-A pair: {current_qa['question'][:50]}... -> {current_qa['answer'][:50]}...")
                 else:
-                    current_qa["answer"] = content_text
+                    # 🔥 即使没找到答案，如果问题本身有价值，也尝试收集
+                    if len(current_qa['question']) > 10:
+                        # 作为单独的问题记录（可能后续会有LLM处理）
+                        self.logger.debug(f"Found question without immediate answer: {current_qa['question'][:50]}...")
+            
+            # 🔥 如果当前段是答案，但前面没有匹配的问题（可能是独立回答）
+            elif segment['is_answerer']:
+                # 向前查找是否有未配对的问题
+                unmatched_question = None
+                for k in range(max(0, i-3), i):
+                    if (segments[k]['is_questioner'] and 
+                        not any(pair['question'].strip() == segments[k]['content'].strip() for pair in qa_pairs)):
+                        unmatched_question = segments[k]
+                        break
+                
+                if unmatched_question:
+                    orphan_qa = {
+                        "question": unmatched_question['content'],
+                        "answer": segment['content'],
+                        "source_confidence": "high",
+                        "source_type": "rule_based_strict"
+                    }
+                    
+                    if self._is_valid_qa_pair_rule_based(orphan_qa):
+                        qa_pairs.append(self._finalize_qa_pair(orphan_qa))
+                        self.logger.debug(f"Rescued orphan Q-A pair: {orphan_qa['question'][:50]}... -> {orphan_qa['answer'][:50]}...")
+            
+            i += 1
         
-        # 保存最后一个问答对
-        if self._is_valid_qa_pair_rule_based(current_qa):
-            qa_pairs.append(self._finalize_qa_pair(current_qa))
-        
+        self.logger.info(f"🔥 Enhanced extraction completed: {len(qa_pairs)} Q-A pairs found")
         return qa_pairs
 
     def _clean_content(self, content: str) -> str:
@@ -795,3 +872,76 @@ class QAExtractor:
                 f'{prefix.lower()} ' in speaker_lower):
                 return True
         return False 
+
+    def _extract_with_llm_enhanced(self, content: str, llm_client, confidence: str) -> List[Dict[str, Any]]:
+        """
+        🔥 增强的LLM提取方法，针对不同置信度优化
+        """
+        # 根据置信度调整处理策略
+        if confidence == 'low':
+            # 对于低置信度块，使用更宽松的prompt和参数
+            enhanced_prompt = f"""你是专业问答对提取专家。以下文本可能包含问答对，请仔细分析并提取所有可能的问答。
+
+【宽松提取策略】
+• 问题可能没有明确标识符，根据语义判断
+• 回答者可能是段永平、段、大道或其他相关人员
+• 允许间接问答形式
+• 尽可能提取有价值的对话内容
+
+输出格式：JSON数组 [{{"question": "问题", "answer": "回答"}}]
+
+文本内容：
+{content}"""
+            
+            response = llm_client.call_ollama(enhanced_prompt, temperature=0.2)  # 稍高温度增加灵活性
+        else:
+            # 使用标准prompt
+            prompt = self.create_prompt(content)
+            response = llm_client.call_ollama(prompt, temperature=0.1)
+        
+        if not response:
+            return []
+        
+        # 提取JSON
+        qa_pairs = self.extract_json(response)
+        
+        # 🔥 增强的后处理：对提取结果进行质量检查
+        filtered_pairs = []
+        for pair in qa_pairs:
+            if self._validate_extracted_pair(pair, confidence):
+                filtered_pairs.append(pair)
+        
+        return filtered_pairs
+    
+    def _validate_extracted_pair(self, pair: Dict[str, Any], confidence: str) -> bool:
+        """
+        🔥 验证提取的问答对质量
+        根据置信度采用不同的验证标准
+        """
+        if not pair or not pair.get('question') or not pair.get('answer'):
+            return False
+        
+        question = str(pair['question']).strip()
+        answer = str(pair['answer']).strip()
+        
+        # 基本长度检查
+        if len(question) < 3 or len(answer) < 3:
+            return False
+        
+        # 🔥 宽松验证：对于低置信度块，降低验证标准
+        if confidence == 'low':
+            # 低置信度块：只要有基本的问答结构即可
+            return len(question) >= 3 and len(answer) >= 10
+        
+        # 标准验证
+        # 检查问题和答案不能完全相同
+        if question.lower() == answer.lower():
+            return False
+        
+        # 检查答案不能包含明显的问题标识符
+        question_indicators = ['网友：', '问：', '记者：', '主持人：']
+        for indicator in question_indicators:
+            if indicator in answer:
+                return False
+        
+        return True 

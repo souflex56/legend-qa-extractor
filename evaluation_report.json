@@ -1,0 +1,102 @@
+{
+  "golden_set_size": 7,
+  "generated_set_size": 7,
+  "question_similarities": [
+    0.9999998807907104,
+    1.0,
+    0.9974835515022278,
+    0.9979823231697083,
+    1.0,
+    0.999740719795227,
+    0.9928435683250427
+  ],
+  "answer_similarities": [
+    1.0,
+    0.9988250732421875,
+    0.99953693151474,
+    0.9939223527908325,
+    0.5304368734359741,
+    0.9901154041290283,
+    0.9821875691413879
+  ],
+  "matched_pairs": 7,
+  "average_question_similarity": 0.998292863368988,
+  "average_answer_similarity": 0.9278606176376343,
+  "overall_score": 0.9489902913570404,
+  "detailed_matches": [
+    {
+      "golden_index": 0,
+      "matched_generated_index": 0,
+      "question_similarity": 0.9999998807907104,
+      "answer_similarity": 1.0,
+      "golden_question": "段大哥自己是不是无神论者？",
+      "matched_question": "段大哥自己是不是无神论者？",
+      "golden_answer": "我不迷信但我有信仰。",
+      "matched_answer": "我不迷信但我有信仰。"
+    },
+    {
+      "golden_index": 1,
+      "matched_generated_index": 1,
+      "question_similarity": 1.0,
+      "answer_similarity": 0.9988250732421875,
+      "golden_question": "投资是否有信仰？",
+      "matched_question": "投资是否有信仰？",
+      "golden_answer": "投资的信仰指的是： 相信长期而言股市是称重机， 对没有信仰的人而言，股市永远是投票器。",
+      "matched_answer": "投资的信仰指的是：相信长期而言股市是称重机，对没有信仰的人而言， 股市永远是投票器。"
+    },
+    {
+      "golden_index": 2,
+      "matched_generated_index": 2,
+      "question_similarity": 0.9974835515022278,
+      "answer_similarity": 0.99953693151474,
+      "golden_question": "有时间能开一篇您对迷信和信仰的个人经验和故事？特别想听听您的这些小故事。",
+      "matched_question": "有时间能开一篇您对迷信和信仰的个人经验和故事？特别想听听您的这 些小故事。",
+      "golden_answer": "我说的信仰就是你骨子里真的相信的东西，是不会被某些事情动摇的。比如长期利润及净现金流好的公司股价早晚会跟上来等等。",
+      "matched_answer": "我说的信仰就是你骨子里真的相信的东西，是不会被某些事情动摇的。 比如长期利润及净现金流好的公司股价早晚会跟上来等等。"
+    },
+    {
+      "golden_index": 3,
+      "matched_generated_index": 3,
+      "question_similarity": 0.9979823231697083,
+      "answer_similarity": 0.9939223527908325,
+      "golden_question": "比尔盖茨说巴菲特有很强烈的宗教信仰感，这让我挺意外的，我记得有个访谈里， 您说您对宗教的态度和巴菲特差不多， 您了解的巴菲特对于宗教是怎样的呢？",
+      "matched_question": "比尔盖茨说巴菲特有很强烈的宗教信仰感，这让我挺意外的，我记得 有个访谈里，您说您对宗教的态度和巴菲特差不多，您了解的巴菲特对于宗教是 怎样的呢？",
+      "golden_answer": "我理解“宗教”大概就是信仰的意思，就是说心里有些“must believe\"的东西。 我的宗教态度确实和老巴一样， 我们都信仰巴菲特对投资的理解---“买股票就是买公司”。“买股票就是买公司”这句话会...",
+      "matched_answer": "我理解“宗教”大概就是信仰的意思，就是说心里有些“must believe\"的东西。我的宗教态度确实和老巴一样，我们都信仰巴菲特对投资的理 解---“买股票就是买公司”。“买股票就是买公司”这句话会说..."
+    },
+    {
+      "golden_index": 4,
+      "matched_generated_index": 4,
+      "question_similarity": 1.0,
+      "answer_similarity": 0.5304368734359741,
+      "golden_question": "我没有信仰，更糟糕的是我不在如何改变。",
+      "matched_question": "我没有信仰，更糟糕的是我不在如何改变。",
+      "golden_answer": "You must believe.---乌龟大师 \n要相信的是：做对的事情最后会有好结果，或者说做错的事情最后会有大麻烦。至于把事情做对则是个过程，有时候快有时候慢，需要投资者耐心等待。",
+      "matched_answer": "You must believe. ---乌龟大师"
+    },
+    {
+      "golden_index": 5,
+      "matched_generated_index": 5,
+      "question_similarity": 0.999740719795227,
+      "answer_similarity": 0.9901154041290283,
+      "golden_question": "个人觉得说不定大哥的某些看法和观点也会慢慢有变化，就像十年前你也许还不怎么信巴菲特，现在就比较相信，不知将来会怎样？",
+      "matched_question": "个人觉得说不定大哥的某些看法和观点也会慢慢有变化，就像十年前 你也许还不怎么信巴菲特，现在就比较相信，不知将来会怎样？",
+      "golden_answer": "我从看到“巴菲特”第一分钟就开始相信巴菲特了， 从来没动摇过。 心中没有“巴菲特”的人是很难相信“巴菲特”的， 而且谁说都没用。",
+      "matched_answer": "我从看到“巴菲特”第一分钟就开始相信巴菲特了，从来没动摇过。心 中没有“巴菲特”的人是很难相信“巴菲特”的，而且谁说都没用。"
+    },
+    {
+      "golden_index": 6,
+      "matched_generated_index": 6,
+      "question_similarity": 0.9928435683250427,
+      "answer_similarity": 0.9821875691413879,
+      "golden_question": "当我第一次看到您讲的“买股票就是买公司”的话时，我的内心就有一种被震撼的感觉， 真的是这样。 当悟到这个道理后， 内心的喜悦比得到多少钱还高兴。 我曾经试着把这个理念讲给我的几个朋友， 但是我发现很难...",
+      "matched_question": "当我第一次看到您讲的“买股票就是买公司”的话时，我的内心就有 一种被震撼的感觉，真的是这样。当悟到这个道理后，内心的喜悦比得到多少钱 还高兴。我曾经试着把这个理念讲给我的几个朋友，但是我发现很难，怎么...",
+      "golden_answer": "道的东西确实难教， 必须要靠自己悟。 心中无道的人你怎么说也是没用的。大多数人都是不容易 open 的，很难接受跟自己以前认识不同的东西。我有时候感觉很奇怪的是，如果是个已经很成功的人，不太接受新东西...",
+      "matched_answer": "道的东西确实难教，必须要靠自己悟。心中无道的人你怎么说也是没用 的。大多数人都是不容易open 的，很难接受跟自己以前认识不同的东西。我有 时候感觉很奇怪的是，如果是个已经很成功的人，不太接受新东西我..."
+    }
+  ],
+  "grade": "优秀 🏆",
+  "confidence_distribution": {
+    "high": "7 blocks (100.0%)"
+  }
+}

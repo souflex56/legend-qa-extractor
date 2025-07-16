@@ -4,9 +4,10 @@ import os
 import asyncio
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from tqdm import tqdm
 import time
+import re # Added for regex in _extract_complete_qa_first
 
 from .config import Config
 from .core import PDFProcessor, TextProcessor, QAExtractor, LLMClient
@@ -108,54 +109,74 @@ class QAExtractionProcessor:
         pdf_info = self.pdf_processor.get_pdf_info(pdf_path)
         self.logger.info(f"📊 PDF info: {pdf_info.get('page_count', 'unknown')} pages")
         
-        # Process text and create blocks
-        self.logger.info("✂️ Starting semantic grouping...")
+        # 🔥 重新设计的处理流程：先识别问答对，再分块
+        self.logger.info("🔍 Starting QA-first processing pipeline...")
         
         # 预处理文本
         preprocessed_text = self.text_processor.preprocess_qa_text(raw_text)
         
         # 分割成段落
         paragraphs = [p.strip() for p in preprocessed_text.split('\n') if p.strip()]
+        self.logger.info(f"📝 Split into {len(paragraphs)} paragraphs")
         
-        # 使用新的语义分组器
-        processed_blocks_data = self.semantic_grouper.group(paragraphs)
+        # 🔥 第一步：全文rule-based扫描，识别完整问答对
+        self.logger.info("🎯 Step 1: Rule-based full-text QA identification...")
+        complete_qa_blocks, remaining_paragraphs = self._extract_complete_qa_first(paragraphs)
         
-        self.logger.info(f"✅ Generated {len(processed_blocks_data)} semantic blocks for LLM processing.")
+        self.logger.info(f"✅ Found {len(complete_qa_blocks)} complete QA blocks")
+        self.logger.info(f"📋 Remaining {len(remaining_paragraphs)} paragraphs for semantic grouping")
+        
+        # 🔥 第二步：对剩余段落进行语义分组
+        semantic_blocks = []
+        if remaining_paragraphs:
+            self.logger.info("🧠 Step 2: Semantic grouping for remaining content...")
+            # 获取剩余段落在原始列表中的索引
+            remaining_indices = [i for i, para in enumerate(paragraphs) if para in remaining_paragraphs]
+            semantic_blocks = self.semantic_grouper._semantic_dynamic_grouping(paragraphs, remaining_indices)
+            self.logger.info(f"✅ Created {len(semantic_blocks)} semantic blocks")
+        
+        # 🔥 第三步：合并所有块
+        all_blocks = complete_qa_blocks + semantic_blocks
+        self.logger.info(f"📦 Total blocks for processing: {len(all_blocks)}")
         
         # --- BEGIN: Added for block size inspection ---
-        self.logger.info("🔍 Individual Block Sizes:")
+        self.logger.info("🔍 Block Analysis:")
         total_chars = 0
-        for i, block_data in enumerate(processed_blocks_data):
+        qa_complete_count = sum(1 for b in all_blocks if b.get('qa_complete', False))
+        for i, block_data in enumerate(all_blocks):
             size = len(block_data.get('content', ''))
             total_chars += size
-            self.logger.info(f"  - Block {i+1}/{len(processed_blocks_data)}: {size} characters")
-        if processed_blocks_data:
-            avg_size = total_chars / len(processed_blocks_data)
+            block_type = "QA-Complete" if block_data.get('qa_complete', False) else "Semantic"
+            self.logger.info(f"  - Block {i+1}/{len(all_blocks)} [{block_type}]: {size} characters")
+        if all_blocks:
+            avg_size = total_chars / len(all_blocks)
+            self.logger.info(f"  - Complete QA blocks: {qa_complete_count}")
+            self.logger.info(f"  - Semantic blocks: {len(all_blocks) - qa_complete_count}")
             self.logger.info(f"  - Average block size: {avg_size:.0f} characters")
         # --- END: Added for block size inspection ---
         
-        # Filter blocks if QA filtering is enabled - 现在操作的是包含元数据的块字典列表
+        # Filter blocks if QA filtering is enabled
         if self.config.enable_qa_filter:
-            original_count = len(processed_blocks_data)
-            processed_blocks_data = [b for b in processed_blocks_data if self.text_processor.block_has_qa(b["content"])]
-            self.logger.info(f"⚡ QA filtering: {len(processed_blocks_data)} blocks remaining (from {original_count})")
+            original_count = len(all_blocks)
+            all_blocks = [b for b in all_blocks if b.get('qa_complete', False) or self.text_processor.block_has_qa(b["content"])]
+            self.logger.info(f"⚡ QA filtering: {len(all_blocks)} blocks remaining (from {original_count})")
         
-        # Apply sampling ratio - 现在操作的是包含元数据的块字典列表
+        # Apply sampling ratio
         if self.config.extract_ratio < 1.0:
-            sample_size = max(int(len(processed_blocks_data) * self.config.extract_ratio), 1)
+            sample_size = max(int(len(all_blocks) * self.config.extract_ratio), 1)
             
             # 根据采样策略选择blocks
             if getattr(self.config, 'sampling_strategy', 'sequential') == 'random':
                 import random
                 # 随机采样
-                processed_blocks_data = random.sample(processed_blocks_data, sample_size)
-                self.logger.info(f"⚡ Applied random sampling ratio: {len(processed_blocks_data)} blocks selected")
+                all_blocks = random.sample(all_blocks, sample_size)
+                self.logger.info(f"⚡ Applied random sampling ratio: {len(all_blocks)} blocks selected")
             else:
                 # 顺序采样（从头开始）
-                processed_blocks_data = processed_blocks_data[:sample_size]
-                self.logger.info(f"⚡ Applied sequential sampling ratio: {len(processed_blocks_data)} blocks selected")
+                all_blocks = all_blocks[:sample_size]
+                self.logger.info(f"⚡ Applied sequential sampling ratio: {len(all_blocks)} blocks selected")
         
-        if not processed_blocks_data:
+        if not all_blocks:
             self.logger.warning("⚠️ No valid blocks found for processing")
             return {
                 'success': False,
@@ -171,27 +192,36 @@ class QAExtractionProcessor:
         with open(output_path, "w", encoding="utf-8") as f:
             pass
         
-
-        
         # Process blocks and extract Q&A pairs
-        self.logger.info(f"🤖 Processing {len(processed_blocks_data)} blocks with LLM...")
-        results = self._process_blocks(processed_blocks_data, output_path, self.config.enable_llm_anchor)
+        self.logger.info(f"🤖 Processing {len(all_blocks)} blocks with optimized pipeline...")
+        results = self._process_blocks(all_blocks, output_path, self.config.enable_llm_anchor)
         
         # Generate final statistics with confidence analysis
-        stats = self._generate_statistics(results, pdf_info, len(processed_blocks_data))
+        stats = self._generate_statistics(results, pdf_info, len(all_blocks))
         
         # Add confidence-based processing statistics
-        confidence_stats = self._analyze_confidence_processing(results, processed_blocks_data)
-        stats.update(confidence_stats)
+        confidence_stats = self._analyze_confidence_processing(results, all_blocks)
         
-
+        # 🔥 增强日志输出，显示新处理流程的效果
+        self.logger.info(f"🎉 QA-First Processing Pipeline Completed!")
+        self.logger.info(f"📊 Processing Summary:")
+        self.logger.info(f"   - Total QA pairs extracted: {stats['qa_pairs_extracted']}")
+        self.logger.info(f"   - Complete QA blocks: {qa_complete_count} (direct rule-based)")
+        self.logger.info(f"   - Semantic blocks: {len(all_blocks) - qa_complete_count} (LLM processed)")
+        self.logger.info(f"   - Processing efficiency: {len(all_blocks)} blocks → {stats['qa_pairs_extracted']} QA pairs")
         
-        self.logger.info(f"🎉 Processing completed! Extracted {stats['qa_pairs_extracted']} Q&A pairs")
-        self.logger.info(f"📊 Confidence-based processing stats:")
-        self.logger.info(f"   - High confidence blocks: {confidence_stats.get('high_confidence_blocks', 0)} (rule-based)")
-        self.logger.info(f"   - Medium confidence blocks: {confidence_stats.get('medium_confidence_blocks', 0)} (LLM conservative)")
-        self.logger.info(f"   - Low confidence blocks: {confidence_stats.get('low_confidence_blocks', 0)} (LLM permissive)")
-        self.logger.info(f"   - Skipped blocks: {confidence_stats.get('skipped_blocks', 0)}")
+        # 输出方法统计
+        method_stats = {}
+        for result in results:
+            if result.get('success', False):
+                method = result.get('method', 'unknown')
+                method_stats[method] = method_stats.get(method, 0) + result.get('qa_count', 0)
+        
+        if method_stats:
+            self.logger.info(f"📋 Extraction Methods Used:")
+            for method, count in method_stats.items():
+                self.logger.info(f"   - {method}: {count} QA pairs")
+        
         self.logger.info(f"📁 Output saved to: {output_path}")
         
         # 输出token监控总结（如果启用）
@@ -201,12 +231,18 @@ class QAExtractionProcessor:
         # **🚀 PERFORMANCE OPTIMIZATION: Log performance summary**
         self.llm_client.log_performance_summary()
         
+        # Success response
         return {
             'success': True,
             'output_path': output_path,
             'stats': stats,
-            'pdf_info': pdf_info,
-            'performance_stats': self.llm_client.get_performance_report()
+            'confidence_stats': confidence_stats,
+            'processing_summary': {
+                'complete_qa_blocks': qa_complete_count,
+                'semantic_blocks': len(all_blocks) - qa_complete_count,
+                'total_blocks': len(all_blocks),
+                'method_stats': method_stats
+            }
         }
     
     def _process_blocks(self, blocks: List[Dict[str, Any]], output_path: str, enable_llm_anchor: bool) -> List[Dict[str, Any]]:
@@ -358,11 +394,50 @@ class QAExtractionProcessor:
         try:
             # Extract block content and metadata
             block_content = block_data["content"]
-            # 新的语义分组器提供的元数据
             confidence = block_data.get("confidence", "unknown")
             block_type = block_data.get("type", "unknown")
             domain = block_data.get("domain", "general")
+            qa_complete = block_data.get("qa_complete", False)
             
+            # 🔥 新增：对于完整QA块，直接进行rule-based提取
+            if qa_complete:
+                self.logger.debug(f"Processing complete QA block {block_idx + 1} with direct rule-based extraction")
+                
+                # 直接使用QA提取器的规则方法
+                qa_pairs = self.qa_extractor._extract_from_high_confidence_block(block_content)
+                
+                # 处理提取结果
+                processed_pairs = []
+                for qa_pair in qa_pairs:
+                    clean_question = self.text_processor.clean_question_text(qa_pair["question"])
+                    answer = qa_pair["answer"]
+                    
+                    # 处理超长答案
+                    if len(answer) > self.qa_extractor.chain_summary_threshold:
+                        self.logger.info(f"Processing long answer for complete QA block {block_idx + 1}")
+                        answer = self.qa_extractor._process_long_answer(answer, self.llm_client)
+                    
+                    processed_pairs.append({
+                        "question": clean_question,
+                        "answer": answer,
+                        "source_text": block_content,
+                        "source_confidence": "high",  # 完整QA块总是高置信度
+                        "source_type": "complete_qa_pair",
+                        "domain": domain
+                    })
+                
+                processing_time = time.time() - start_time
+                
+                return {
+                    'block_idx': block_idx,
+                    'success': True,
+                    'qa_count': len(processed_pairs),
+                    'qa_pairs': processed_pairs,
+                    'processing_time': processing_time,
+                    'method': 'complete_qa_direct'
+                }
+            
+            # 🔥 对于非完整QA块，使用原有的置信度处理逻辑
             # 暂时不使用sliding_context，因为新架构中的语义关联更强
             sliding_context = ""
             
@@ -413,41 +488,19 @@ class QAExtractionProcessor:
                 
                 qa_pairs = self.qa_extractor.extract_json(response)
                 
+                # 对于中置信度块，至少尝试一次rule-based作为fallback
                 if not qa_pairs:
-                    self.logger.warning(f"❌ Block {block_idx + 1}: No Q&A pairs extracted")
-                    if self.error_logger:
-                        self.error_logger.error(
-                            f"No valid Q&A pairs extracted for block {block_idx + 1}\n"
-                            f"LLM response: {response}\n"
-                            f"Block content:\n{block_content}"
-                        )
-                    return {
-                        'block_idx': block_idx,
-                        'success': False,
-                        'error': 'No Q&A pairs extracted',
-                        'qa_count': 0
-                    }
-            else:
-                # 低置信度块：使用更宽松的LLM处理，或跳过
-                if confidence == 'low':
-                    self.logger.debug(f"Processing low confidence block {block_idx + 1} with LLM (permissive)")
-                    # 对于低置信度块，可以选择跳过或使用更宽松的参数
-                    if self.config.skip_low_confidence:
-                        # 如果配置了跳过低置信度块
-                        self.logger.info(f"Skipping low confidence block {block_idx + 1} due to skip_low_confidence setting")
-                        
-                        return {
-                            'block_idx': block_idx,
-                            'success': True,
-                            'qa_count': 0,
-                            'qa_pairs': [],
-                            'skipped': True,
-                            'reason': 'Low confidence block skipped by configuration'
-                        }
+                    self.logger.debug(f"LLM extraction failed for medium confidence block {block_idx + 1}, trying rule-based fallback")
+                    qa_pairs = self.qa_extractor._extract_from_high_confidence_block(processed_block)
                 
+            else:
+                # 低置信度块：使用宽松LLM处理
+                self.logger.debug(f"Processing {confidence} confidence block {block_idx + 1} with LLM (permissive)")
+                
+                # 为低置信度块适当增加温度，可能发现更多隐藏的QA对
                 response = self.llm_client.call_ollama(
                     prompt, 
-                    temperature=min(0.3, self.config.temperature + 0.05)  # 稍微提高温度，更宽松
+                    temperature=min(0.3, self.config.temperature + 0.05)  # 稍微增加温度
                 )
                 
                 if response is None:
@@ -493,51 +546,50 @@ class QAExtractionProcessor:
                     "domain": domain
                 })
             
-            # Add metadata to Q&A pairs
-            for pair in processed_pairs:
-                # Add sliding context if enabled
-                if sliding_context:
-                    pair["sliding_context"] = sliding_context
-                
-                # Generate topic for each Q&A pair if enabled
-                if enable_llm_anchor:
-                    qa_topic = self._generate_qa_topic(pair["question"], pair["answer"])
-                    if qa_topic:
-                        pair["topic"] = qa_topic
-                        self.logger.debug(f"Generated topic for Q&A: {qa_topic}")
+            # Add LLM anchors if enabled
+            if enable_llm_anchor and processed_pairs:
+                self.logger.debug(f"Generating LLM anchor for block {block_idx + 1}")
+                anchor = self._generate_llm_anchor(block_content)
+                if anchor:
+                    for pair in processed_pairs:
+                        pair["llm_anchor"] = anchor
             
-            # Log to success logger if enabled
-            if self.success_logger:
-                for i, pair in enumerate(processed_pairs):
-                    success_log_content = (
-                        f"Successfully extracted Q&A pair from block {block_idx + 1}:\n\n"
-                        f"Question: {pair['question']}\n\n"
-                        f"Answer: {pair['answer']}\n\n"
-                        f"Source block:\n{block_content}\n\n"
-                        f"{'='*80}"
+            processing_time = time.time() - start_time
+            
+            # Log success
+            if self.success_logger and processed_pairs:
+                for pair in processed_pairs:
+                    self.success_logger.info(
+                        f"Block {block_idx + 1} - Q: {pair['question'][:100]}...\n"
+                        f"A: {pair['answer'][:200]}..."
                     )
-                    self.success_logger.info(success_log_content)
             
             return {
                 'block_idx': block_idx,
                 'success': True,
                 'qa_count': len(processed_pairs),
-                'qa_pairs': processed_pairs
+                'qa_pairs': processed_pairs,
+                'processing_time': processing_time,
+                'method': 'complete_qa_direct' if qa_complete else f'{confidence}_confidence_llm'
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Block {block_idx + 1}: Unexpected error: {e}")
+            processing_time = time.time() - start_time
+            error_msg = f"Error processing block {block_idx + 1}: {e}"
+            self.logger.error(error_msg)
+            
             if self.error_logger:
                 self.error_logger.error(
-                    f"Unexpected error in block {block_idx + 1}: {e}\n"
-                    f"Block content:\n{block_data.get('content', 'N/A')}"
+                    f"{error_msg}\n"
+                    f"Block content:\n{block_content}"
                 )
             
             return {
                 'block_idx': block_idx,
                 'success': False,
-                'error': f'Unexpected error: {e}',
-                'qa_count': 0
+                'error': str(e),
+                'qa_count': 0,
+                'processing_time': processing_time
             }
     
     def _get_output_path(self) -> str:
@@ -776,3 +828,164 @@ class QAExtractionProcessor:
                         confidence_stats['low_confidence_qa_pairs'] += 1
         
         return confidence_stats
+
+    def _extract_complete_qa_first(self, paragraphs: List[str]) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """
+        🔥 核心方法：全文rule-based扫描，优先识别完整问答对
+        
+        这是新设计的核心：不再受块大小限制，直接在全文范围内识别完整问答对
+        
+        Args:
+            paragraphs: 所有段落列表
+            
+        Returns:
+            Tuple[完整QA块列表, 剩余未配对段落列表]
+        """
+        self.logger.info(f"🔍 Scanning {len(paragraphs)} paragraphs for complete QA pairs...")
+        
+        # 使用QA提取器的增强问答识别逻辑
+        # 定义说话人前缀
+        questioner_prefixes = ['网友', '问', 'Q', '记者', '提问', '主持人', '观众']
+        answerer_prefixes = ['段永平', '段', '大道', '答', 'A']
+        
+        # 构建正则表达式
+        questioner_patterns = []
+        answerer_patterns = []
+        
+        for prefix in questioner_prefixes:
+            questioner_patterns.append(f'{re.escape(prefix)}\\s*[A-Za-z0-9\u4e00-\u9fa5]*')
+            questioner_patterns.append(f'[A-Za-z0-9\u4e00-\u9fa5]+\\s+{re.escape(prefix)}')
+        
+        for prefix in answerer_prefixes:
+            answerer_patterns.append(f'{re.escape(prefix)}\\s*[A-Za-z0-9\u4e00-\u9fa5]*')
+            answerer_patterns.append(f'[A-Za-z0-9\u4e00-\u9fa5]+\\s+{re.escape(prefix)}')
+        
+        # 收集所有说话段落
+        segments = []
+        used_indices = set()
+        
+        for i, para in enumerate(paragraphs):
+            # 检查是否是问题
+            is_questioner = self._is_speaker_type(para, questioner_patterns)
+            # 检查是否是答案
+            is_answerer = self._is_speaker_type(para, answerer_patterns)
+            
+            if is_questioner or is_answerer:
+                segments.append({
+                    'index': i,
+                    'content': para,
+                    'is_questioner': is_questioner,
+                    'is_answerer': is_answerer
+                })
+        
+        self.logger.info(f"🎯 Found {len(segments)} speaker segments (Q/A candidates)")
+        
+        # 智能配对逻辑
+        complete_qa_blocks = []
+        i = 0
+        
+        while i < len(segments):
+            segment = segments[i]
+            
+            if segment['is_questioner']:
+                # 找到问题，寻找对应答案
+                qa_content = [segment['content']]
+                qa_indices = [segment['index']]
+                used_indices.add(segment['index'])
+                
+                # 向前寻找答案
+                answer_found = False
+                j = i + 1
+                
+                # 在接下来的段落中寻找答案（最多查看5个段落）
+                while j < len(segments) and j < i + 6:
+                    next_segment = segments[j]
+                    
+                    # 如果找到答案者
+                    if next_segment['is_answerer']:
+                        qa_content.append(next_segment['content'])
+                        qa_indices.append(next_segment['index'])
+                        used_indices.add(next_segment['index'])
+                        answer_found = True
+                        
+                        # 🔥 收集同一回答者的后续补充
+                        k = j + 1
+                        while k < len(segments) and k < j + 3:
+                            follow_up = segments[k]
+                            # 检查后续段落
+                            if k < len(paragraphs) - 1:
+                                next_para = paragraphs[segments[k]['index'] + 1] if segments[k]['index'] + 1 < len(paragraphs) else ""
+                                # 如果是同一回答者的继续，或者是无标识的补充内容
+                                if (follow_up['is_answerer'] or 
+                                    (not follow_up['is_questioner'] and not self._is_speaker_type(next_para, questioner_patterns + answerer_patterns))):
+                                    qa_content.append(follow_up['content'])
+                                    qa_indices.append(follow_up['index'])
+                                    used_indices.add(follow_up['index'])
+                                    k += 1
+                                else:
+                                    break
+                            else:
+                                break
+                        break
+                    
+                    # 如果遇到新问题，停止
+                    elif next_segment['is_questioner']:
+                        break
+                    
+                    j += 1
+                
+                # 如果找到完整问答对，创建块
+                if answer_found and len(qa_content) >= 2:
+                    # 收集问答对之间的任何中间段落
+                    start_idx = min(qa_indices)
+                    end_idx = max(qa_indices)
+                    
+                    # 添加中间的任何相关段落
+                    for idx in range(start_idx + 1, end_idx):
+                        if idx not in used_indices and idx < len(paragraphs):
+                            # 检查是否是相关的中间内容（短段落且不是新的问答）
+                            middle_para = paragraphs[idx]
+                            if (len(middle_para) < 100 and 
+                                not self._is_speaker_type(middle_para, questioner_patterns + answerer_patterns)):
+                                qa_content.insert(-1, middle_para)  # 插在答案前
+                                qa_indices.append(idx)
+                                used_indices.add(idx)
+                    
+                    # 创建完整QA块
+                    complete_content = "\n\n".join(qa_content)
+                    complete_qa_blocks.append({
+                        'content': complete_content,
+                        'confidence': 'high',
+                        'type': 'complete_qa_pair',
+                        'qa_complete': True,  # 标记为完整问答对
+                        'indices': sorted(qa_indices),
+                        'domain': 'general',
+                        'qa_count': 1  # 包含一个完整问答对
+                    })
+                    
+                    self.logger.debug(f"✅ Created complete QA block from indices {sorted(qa_indices)}")
+            
+            i += 1
+        
+        # 收集剩余未使用的段落
+        remaining_paragraphs = [para for i, para in enumerate(paragraphs) if i not in used_indices]
+        
+        self.logger.info(f"🎉 Successfully identified {len(complete_qa_blocks)} complete QA pairs")
+        self.logger.info(f"📋 {len(remaining_paragraphs)} paragraphs remain for semantic processing")
+        
+        return complete_qa_blocks, remaining_paragraphs
+    
+    def _is_speaker_type(self, paragraph: str, patterns: List[str]) -> bool:
+        """检查段落是否匹配说话人模式"""
+        if not paragraph:
+            return False
+        
+        # 移除编号前缀
+        clean_para = re.sub(r'^\d+\.\s*', '', paragraph).strip()
+        
+        # 检查是否匹配任何模式
+        for pattern in patterns:
+            if re.search(f'(?:^|\\n)\\s*{pattern}\\s*[:：]', clean_para):
+                return True
+        
+        return False
