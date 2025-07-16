@@ -96,12 +96,12 @@ graph TB
     
     M --> P[JSONL输出]
     
-    style E fill:#90EE90
-    style L fill:#FFE4B5
-    style N fill:#87CEEB
-    style G fill:#F0E68C
-    style H fill:#DDA0DD
-    style I fill:#FFB6C1
+    style E fill:#E6F4EA
+    style L fill:#F5F5F5
+    style N fill:#D6D6D6
+    style G fill:#FDECEA
+    style H fill:#F5A89D
+    style I fill:#C94A44
 ```
 
 ### 🎯 三层智能分块详解
