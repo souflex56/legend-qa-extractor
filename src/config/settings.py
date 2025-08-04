@@ -11,6 +11,10 @@ from typing import Optional, List
 class Config:
     """Configuration class for QA Extractor."""
     
+    # Target person configuration
+    target_person_config: str = "config/target_persons/duan_yongping.yaml"
+    prompt_template_dir: str = "src/prompts"
+    
     # File paths
     pdf_filename: str = "uploaded.pdf"
     output_filename: str = "output_final_qa.jsonl"
@@ -108,6 +112,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
     
     # Override with environment variables
     env_mappings = {
+        'TARGET_PERSON_CONFIG': 'target_person_config',
+        'PROMPT_TEMPLATE_DIR': 'prompt_template_dir',
         'PDF_FILENAME': 'pdf_filename',
         'OUTPUT_FILENAME': 'output_filename',
         'OUTPUT_DIR': 'output_dir',

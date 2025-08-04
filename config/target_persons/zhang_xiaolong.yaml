@@ -1,0 +1,35 @@
+target_person:
+  main_name: "张小龙"
+  aliases: ["小龙", "龙哥", "张总", "Allen", "张小龙先生"]
+  description: "微信创始人，产品经理"
+
+questioner_types:
+  - "记者"
+  - "用户"
+  - "开发者"
+  - "产品经理"
+  - "主持人"
+  - "观众"
+  - "提问者"
+
+domain_context: "产品设计与互联网"
+
+sample_examples:
+  - question: "微信的设计理念是什么？"
+    questioner: "记者"
+    answer: "微信的设计理念是用完即走。好的产品应该让用户用完就走，而不是粘住用户。"
+    answerer_alias: "张小龙"
+  
+  - question: "有人说微信太臃肿了。"
+    questioner: "观点引用"
+    answer: "我们一直在克制，不做过多的功能。每个功能都要经过深思熟虑。"
+    answerer_alias: "小龙"
+  
+  - question: "如何看待小程序的未来？"
+    questioner: "开发者"
+    answer: "小程序代表了一种新的应用形态，它不需要下载安装，触手可及，用完即走。这是未来的趋势。"
+    answerer_alias: "张小龙"
+
+output_format:
+  question_field: "question"
+  answer_field: "answer"

@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import logging
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from .prompt_generator import PromptGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -29,68 +30,28 @@ class QAExtractor:
         self.nli_tokenizer = None
         self.nli_model_path = long_answer_config.get('nli_model_path', 'MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7')
         
-        # 精简版基础prompt，保留核心功能但大幅缩短
-        self.compact_prompt = """你是中文问答对提取专家，从原文提取段永平的所有真实问答对。
-
-【核心原则】必须有真实外部提问（网友/主持人/引用观点）引发段永平回应，每个问题对应一个完整回答（含连续补充），禁止提取修辞性自问句。
-
-【提取流程】找到真实外部问题 → 匹配完整段永平回答 → 严格验证配对
-
-【严禁】段永平阐述中的"什么是XX？""很难吗？"等修辞问句、问答内容相同/颠倒、无外部引发就输出
-
-输出格式：JSON数组 [{"question": "外部问题", "answer": "段永平完整回答"}]
-
-原文："""
+        # 初始化 prompt 生成器
+        prompt_template_dir = self.config.get('prompt_template_dir', 'src/prompts')
+        self.prompt_generator = PromptGenerator(prompt_template_dir)
         
-        # 完整版基础prompt（当有充足空间时使用）
-        self.full_prompt = """你是专业中文问答对提取专家，从原文提取段永平的所有有效问答对。
-
-🎯 【核心原则】
-• 必须存在真实外部提问（网友、主持人、引用观点等）引发段永平回应
-• 每个外部问题只对应一个完整合并回答（包含所有后续补充片段）
-• 绝对禁止提取段永平阐述中的修辞性自问句
-
-📋 【提取流程】
-1️⃣ **问题识别**：明确标识（网友：、问：）或引用观点（有人说、文章引用）
-2️⃣ **回答匹配**：段永平的完整连续回应（含所有相关补充）
-3️⃣ **配对验证**：问题与回答逻辑对应，无内容重复/颠倒
-
-🔧 【边界处理】
-• **同一问题的离散回答**：合并为一个完整answer
-• **新问题判断**：出现新提问者或话题实质转换
-• **修辞性问句**：段永平论述中的"什么是XX？""很难吗？"等不提取
-
-✅ **核心示例**
-```
-网友：什么是stop doing list？
-段永平：所谓要做对的事情实际上是通过不做不对的事情来实现的。
-
-有人认为价值投资已经过时了。
-我不这么认为。价值投资永远不会过时，因为它的本质是买优秀的公司。
-
-主持人：投资中最难的是什么？
-段永平：最难的是克服恐惧和贪婪。这是人性。
-主持人：还有吗？
-段永平：还有就是坚持不懂不做。只在自己的能力圈内活动。
-```
-
-正确输出：
-```json
-[
-  {"question": "什么是stop doing list？", "answer": "所谓要做对的事情实际上是通过不做不对的事情来实现的。"},
-  {"question": "有人认为价值投资已经过时了。", "answer": "我不这么认为。价值投资永远不会过时，因为它的本质是买优秀的公司。"},
-  {"question": "投资中最难的是什么？", "answer": "最难的是克服恐惧和贪婪。这是人性。还有就是坚持不懂不做。只在自己的能力圈内活动。"}
-]
-```
-
-❌ **集中错误防范**
-• 把段永平的修辞问句当外部问题（如"价值投资的核心是什么？就是买优秀公司"中的问句）
-• 问题和答案内容相同或逻辑颠倒
-• 拆分属于同一问题的连续回答片段
-• 无外部问题引发就输出问答对
-
-🔍 请仔细分析以下原文，提取所有符合条件的问答对：
-"""
+        # 加载目标人物配置
+        person_config_path = self.config.get('target_person_config')
+        if person_config_path:
+            self.person_config = self.prompt_generator.load_person_config(person_config_path)
+        else:
+            # 如果没有指定配置文件，使用默认配置
+            self.person_config = self.prompt_generator.load_person_config('config/target_persons/duan_yongping.yaml')
+        
+        # 生成 prompts
+        self.compact_prompt = self.prompt_generator.generate_compact_prompt(self.person_config)
+        self.full_prompt = self.prompt_generator.generate_full_prompt(self.person_config)
+        
+        # 获取目标人物信息用于规则提取
+        self.target_person = self.person_config['target_person']
+        self.questioner_prefixes = self.person_config.get('questioner_types', [])
+        
+        # 构建回答者前缀列表（主名称 + 所有别名）
+        self.answerer_prefixes = [self.target_person['main_name']] + self.target_person.get('aliases', [])
     
     def estimate_token_count(self, text: str) -> int:
         """估算文本的token数量（中文约1.5倍字符数）"""
@@ -633,9 +594,9 @@ class QAExtractor:
         5. 支持带标识符的说话人模式
         """
         
-        # 定义说话人前缀（可扩展）
-        questioner_prefixes = ['网友', '问', 'Q', '记者', '提问', '主持人', '观众']
-        answerer_prefixes = ['段永平', '段', '大道', '答', 'A']
+        # 使用配置的说话人前缀
+        questioner_prefixes = self.questioner_prefixes
+        answerer_prefixes = self.answerer_prefixes
         
         # 预处理：去除编号前缀（如"08. 网友："）
         content = re.sub(r'(?:^|\n)\d+\.\s*', '\n', content, flags=re.MULTILINE)
@@ -794,12 +755,14 @@ class QAExtractor:
             return False
         
         # 检查问题中是否包含回答者前缀（带冒号的格式，避免误判）
-        answerer_pattern = r'(段永平|段|大道|答|A)\s*[:：]'
+        # 使用配置的回答者前缀
+        answerer_pattern = r'(' + '|'.join(re.escape(prefix) for prefix in self.answerer_prefixes) + r')\s*[:：]'
         if re.search(answerer_pattern, question):
             return False
         
         # 检查答案中是否包含提问者前缀（带冒号的格式）
-        questioner_pattern = r'(网友|问|Q|记者|提问|主持人|观众)\s*[:：]'
+        # 使用配置的提问者前缀
+        questioner_pattern = r'(' + '|'.join(re.escape(prefix) for prefix in self.questioner_prefixes) + r')\s*[:：]'
         if re.search(questioner_pattern, answer):
             return False
         
@@ -880,11 +843,13 @@ class QAExtractor:
         # 根据置信度调整处理策略
         if confidence == 'low':
             # 对于低置信度块，使用更宽松的prompt和参数
+            # 构建目标人物的所有名称
+            all_names = '/'.join(self.answerer_prefixes)
             enhanced_prompt = f"""你是专业问答对提取专家。以下文本可能包含问答对，请仔细分析并提取所有可能的问答。
 
 【宽松提取策略】
 • 问题可能没有明确标识符，根据语义判断
-• 回答者可能是段永平、段、大道或其他相关人员
+• 回答者可能是{all_names}或其他相关人员
 • 允许间接问答形式
 • 尽可能提取有价值的对话内容
 

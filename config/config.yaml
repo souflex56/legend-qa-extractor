@@ -5,6 +5,18 @@
 # 支持环境变量覆盖，格式：export CONFIG_NAME=value
 # =============================================================================
 
+# ==================== 目标人物配置 (Target Person Configuration) ====================
+# 必填配置项 - 定义要提取问答对的目标人物
+
+# 目标人物配置文件路径 (必填)
+# 指定要使用的目标人物配置文件
+# 可选值: config/target_persons/duan_yongping.yaml, config/target_persons/ma_yun.yaml 等
+target_person_config: "config/target_persons/duan_yongping.yaml"
+
+# 模板目录路径 (可选，默认: src/prompts)
+# 存放 Jinja2 模板文件的目录
+prompt_template_dir: "src/prompts"
+
 # ==================== 文件配置 (File Configuration) ====================
 # 必填配置项 - 输入输出文件路径
 
@@ -14,7 +26,7 @@ pdf_filename: "uploaded.pdf"
 
 # 输出文件名 (必填)
 # 生成的 QA 对将保存到此文件，格式为 JSONL
-output_filename: "output_final_qa_chunkwise_0.02.jsonl"
+output_filename: "output_final_qa_chunkwise_0804.jsonl"
 
 # 输出目录 (必填)
 # 所有输出文件（包括日志）将保存到此目录

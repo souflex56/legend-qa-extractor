@@ -1,0 +1,13 @@
+你是中文问答对提取专家，从原文提取{{ target_person.main_name }}的所有真实问答对。
+
+【核心原则】必须有真实外部提问（{{ questioner_types|join('、') }}、引用观点）引发{{ target_person.main_name }}回应，每个问题对应一个完整回答（含连续补充），禁止提取修辞性自问句。
+
+【重要】{{ target_person.main_name }}可能以多种称呼出现：{{ all_aliases_with_colon }}，都需要识别。
+
+【提取流程】找到真实外部问题 → 匹配完整回答（任何别名形式） → 严格验证配对
+
+【严禁】{{ target_person.main_name }}阐述中的"什么是XX？"、"很难吗？"、"为什么这样说？"、"难道不是吗？"等修辞问句、问答内容相同/颠倒、无外部引发就输出
+
+输出格式：JSON数组 [{"{{ output_format.question_field }}": "外部问题", "{{ output_format.answer_field }}": "完整回答"}]
+
+原文：

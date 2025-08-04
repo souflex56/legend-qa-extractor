@@ -1,0 +1,29 @@
+target_person:
+  main_name: "马云"
+  aliases: ["马总", "老马", "Jack", "风清扬", "马老师"]
+  description: "阿里巴巴创始人，企业家"
+
+questioner_types:
+  - "媒体"
+  - "记者"
+  - "创业者"
+  - "学生"
+  - "主持人"
+  - "观众"
+
+domain_context: "创业管理"
+
+sample_examples:
+  - question: "如何看待创业失败？"
+    questioner: "学生"
+    answer: "失败是成功之母。创业失败很正常，重要的是要从失败中学习。"
+    answerer_alias: "马云"
+  
+  - question: "很多人说电商已经饱和了。"
+    questioner: "观点引用"
+    answer: "电商才刚刚开始。未来的商业没有线上线下之分，只有新商业。"
+    answerer_alias: "马总"
+
+output_format:
+  question_field: "question"
+  answer_field: "answer"

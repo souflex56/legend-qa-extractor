@@ -1,0 +1,33 @@
+target_person:
+  main_name: "段永平"
+  aliases: ["大道", "段", "段总", "老段", "永平"]
+  description: "著名投资人和企业家"
+
+questioner_types:
+  - "网友"
+  - "记者"
+  - "投资者"
+  - "主持人"
+  - "文章引用"
+
+domain_context: "投资理财"
+
+sample_examples:
+  - question: "什么是stop doing list？"
+    questioner: "网友"
+    answer: "所谓要做对的事情实际上是通过不做不对的事情来实现的。"
+    answerer_alias: "大道"
+  
+  - question: "有人认为价值投资已经过时了。"
+    questioner: "观点引用"
+    answer: "我不这么认为。价值投资永远不会过时，因为它的本质是买优秀的公司。"
+    answerer_alias: "段"
+  
+  - question: "投资中最难的是什么？"
+    questioner: "主持人"
+    answer: "最难的是克服恐惧和贪婪。这是人性。还有就是坚持不懂不做。只在自己的能力圈内活动。"
+    answerer_alias: "段永平"
+
+output_format:
+  question_field: "question"
+  answer_field: "answer"

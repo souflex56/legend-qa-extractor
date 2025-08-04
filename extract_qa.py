@@ -69,6 +69,19 @@ Examples:
         help='Output directory for results and logs'
     )
     
+    # Target person options
+    parser.add_argument(
+        '--target-person',
+        type=str,
+        help='Target person name (e.g., 段永平, 马云)'
+    )
+    
+    parser.add_argument(
+        '--person-config',
+        type=str,
+        help='Path to target person configuration file'
+    )
+    
     # Model options
     parser.add_argument(
         '--model', '-m',
@@ -223,6 +236,26 @@ def load_and_merge_config(args: argparse.Namespace) -> Config:
         config.log_level = 'WARNING'
     elif args.verbose:
         config.log_level = 'DEBUG'
+    
+    # Handle target person configuration
+    if args.person_config:
+        config.target_person_config = args.person_config
+    elif args.target_person:
+        # Map common names to config files
+        person_mapping = {
+            '段永平': 'config/target_persons/duan_yongping.yaml',
+            '马云': 'config/target_persons/ma_yun.yaml',
+            '张小龙': 'config/target_persons/zhang_xiaolong.yaml'
+        }
+        if args.target_person in person_mapping:
+            config.target_person_config = person_mapping[args.target_person]
+        else:
+            # Try to find a matching file
+            possible_file = f"config/target_persons/{args.target_person}.yaml"
+            if os.path.exists(possible_file):
+                config.target_person_config = possible_file
+            else:
+                print(f"⚠️ Warning: No configuration found for '{args.target_person}', using default")
     
     return config
 
