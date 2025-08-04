@@ -7,9 +7,8 @@
 [![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/souflex56/legend-qa-extractor)
 
-**基于本地大模型Ollama的PDF问答对提取工具，智能语义分块，专为高质量AI训练数据而设计**
-
-[English](README_EN.md) • [中文文档](README_CN.md)
+**基于本地大模型Ollama的PDF问答对提取工具**<br>
+**适用场景**：对话系统训练、知识库构建、智能客服数据准备、教育内容提取
 
 </div>
 
@@ -20,9 +19,9 @@
   - [🎯 三层智能分块](#-三层智能分块)
   - [🔗 Prompt智能处理](#-prompt智能处理)
   - [⚡ 性能优化特性](#-性能优化特性)
-- [📊 评估系统详解](#-评估系统详解)
 - [🚀 快速开始](#-快速开始)
 - [🎯 使用示例](#-使用示例)
+- [📊 评估系统详解](#-评估系统详解)
 - [🤝 贡献指南](#-贡献指南)
 - [📄 开源协议](#-开源协议)
 
@@ -100,90 +99,10 @@ if len(answer) > 3000:  # 自定义长答案触发参数
 
 ### ⚡ 性能优化特性
 
-- 🤖 本地大模型集成：支持Ollama自定义LLM，参数model_name
+- 🤖 本地大模型集成：支持Ollama自定义LLM model_name（默认：qwen2.5:7b-instruct）
 - 批量并行处理：启用多线程并行，配置batch_size和max_workers
 - 连接池优化：复用HTTP连接
 - 模型预热机制：配置模型预热，保持30分钟热状态
-
-## 📊 评估系统详解
-
-### 评估指标体系
-
-#### 语义相似度评估
-- **问题匹配度**：使用多语言sentence-transformer计算问题相似度
-- **答案质量度**：深度语义理解，不仅比较文字，更关注语义
-- **综合评分**：问题相似度(30%) + 答案相似度(70%)
-
-#### 详细质量报告
-```json
-{
-  "golden_set_size": 7,
-  "generated_set_size": 7,
-  "average_question_similarity": 0.9983,
-  "average_answer_similarity": 0.9279,
-  "overall_score": 0.9490,
-  "matched_pairs": 7,
-  "grade": "优秀 🏆",
-  "confidence_distribution": {
-    "high": "7 blocks (100.0%)"
-  }
-}
-```
-
-### 快速开始评估
-
-```bash
-# 1. 从Excel创建黄金标准集
-python scripts/excel_to_golden_set.py template  # 生成标注集模板
-# 编辑 golden_set_template.xlsx
-python scripts/excel_to_golden_set.py convert   # 转换为JSONL
-
-# 2. 运行提取
-python extract_qa.py your_document.pdf
-
-# 3. 执行评估
-python evaluation.py
-```
-
-### Token监控
-
-实时监控和优化token使用：
-
-```bash
-📊 Token使用报告
-==================================================
-📝 Prompt使用统计:
-   精简版: 15 次 (60%)
-   完整版: 10 次 (40%)
-🎯 Token使用统计:
-   平均利用率: 68.5%
-   最高使用: 3,245 tokens
-   最低使用: 1,892 tokens
-⚡ 性能指标:
-   处理速度: 2.3 块/分钟
-   平均响应时间: 8.7秒
-🟢 Token利用率健康
-```
-
-### Excel工作流
-
-#### 1. 创建标准集模板
-```bash
-python scripts/excel_to_golden_set.py template
-```
-
-#### 2. Excel表格编辑
-
-| question         | answer                     | domain     | difficulty | quality_score |
-|------------------|----------------------------|------------|------------|---------------|
-| 什么是价值投资？ | 价值投资就是买股票就是公司... | investment | medium     | 5             |
-| 如何看待市场波动？| 市场先生的报价每天都不一样... | investment | easy       | 4             |
-
-#### 3. 转换并评估
-```bash
-python scripts/excel_to_golden_set.py convert
-python evaluation.py
-```
 
 ## 🚀 快速开始
 
@@ -276,6 +195,86 @@ results = evaluator.evaluate_qa_extraction()
 evaluator.generate_evaluation_report(results)
 ```
 
+## 📊 评估系统详解
+
+### 评估指标体系
+
+#### 语义相似度评估
+- **问题匹配度**：使用多语言sentence-transformer计算问题相似度
+- **答案质量度**：深度语义理解，不仅比较文字，更关注语义
+- **综合评分**：问题相似度(30%) + 答案相似度(70%)
+
+#### 详细质量报告
+```json
+{
+  "golden_set_size": 7,
+  "generated_set_size": 7,
+  "average_question_similarity": 0.9983,
+  "average_answer_similarity": 0.9279,
+  "overall_score": 0.9490,
+  "matched_pairs": 7,
+  "grade": "优秀 🏆",
+  "confidence_distribution": {
+    "high": "7 blocks (100.0%)"
+  }
+}
+```
+
+### 快速开始评估
+
+```bash
+# 1. 从Excel创建黄金标准集
+python scripts/excel_to_golden_set.py template  # 生成标注集模板
+# 编辑 golden_set_template.xlsx
+python scripts/excel_to_golden_set.py convert   # 转换为JSONL
+
+# 2. 运行提取
+python extract_qa.py your_document.pdf
+
+# 3. 执行评估
+python evaluation.py
+```
+
+### Token监控
+
+实时监控和优化token使用：
+
+```bash
+📊 Token使用报告
+==================================================
+📝 Prompt使用统计:
+   精简版: 15 次 (60%)
+   完整版: 10 次 (40%)
+🎯 Token使用统计:
+   平均利用率: 68.5%
+   最高使用: 3,245 tokens
+   最低使用: 1,892 tokens
+⚡ 性能指标:
+   处理速度: 2.3 块/分钟
+   平均响应时间: 8.7秒
+🟢 Token利用率健康
+```
+
+### Excel工作流
+
+#### 1. 创建标准集模板
+```bash
+python scripts/excel_to_golden_set.py template
+```
+
+#### 2. Excel表格编辑
+
+| question         | answer                     | domain     | difficulty | quality_score |
+|------------------|----------------------------|------------|------------|---------------|
+| 什么是价值投资？ | 价值投资就是买股票就是公司... | investment | medium     | 5             |
+| 如何看待市场波动？| 市场先生的报价每天都不一样... | investment | easy       | 4             |
+
+#### 3. 转换并评估
+```bash
+python scripts/excel_to_golden_set.py convert
+python evaluation.py
+```
+
 ## 🤝 贡献指南
 
 我们欢迎以下方向的贡献：
@@ -291,6 +290,6 @@ evaluator.generate_evaluation_report(results)
 
 MIT License
 
----
 
-💡 **适用场景**：对话系统训练、知识库构建、智能客服数据准备、教育内容提取
+
+
