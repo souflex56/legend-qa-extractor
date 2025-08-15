@@ -19,6 +19,7 @@
   - [🎯 三层智能分块](#-三层智能分块)
   - [🔗 Prompt智能处理](#-prompt智能处理)
   - [⚡ 性能优化特性](#-性能优化特性)
+- [🏗️ 系统架构](#-系统架构)
 - [🚀 快速开始](#-快速开始)
 - [🎯 使用示例](#-使用示例)
 - [📊 评估系统详解](#-评估系统详解)
@@ -103,6 +104,56 @@ if len(answer) > 3000:  # 自定义长答案触发参数
 - 批量并行处理：启用多线程并行，配置batch_size和max_workers
 - 连接池优化：复用HTTP连接
 - 模型预热机制：配置模型预热，保持30分钟热状态
+
+## 🏗️ 系统架构
+
+### 核心处理流水线概览
+
+Legend QA Extractor 采用 **QA-First + 智能语义分组 + 并发处理** 的架构设计，从 raw PDF content 到 structured Q&A pairs 的完整处理流程包含8个主要阶段：
+
+1. **PDF文本提取** - PyMuPDF 文本提取
+2. **文本预处理** - 标准化Q&A格式，分割段落
+3. **QA优先识别** - 规则基础快速识别明显问答对
+4. **语义分组** - 三层智能分块策略
+5. **并发处理** - ThreadPoolExecutor 并行处理
+6. **LLM提取** - Ollama API 调用，JSON解析
+7. **后处理** - 长答案处理、质量过滤、关键词生成
+8. **输出保存** - JSONL格式保存，详细日志记录
+
+### 架构图预览
+
+```mermaid
+graph LR
+    A[PDF输入] --> B[文本提取]
+    B --> C[预处理]
+    C --> D[QA识别]
+    D --> E[语义分组]
+    E --> F[并发处理]
+    F --> G[LLM提取]
+    G --> H[后处理]
+    H --> I[JSONL输出]
+    
+    style A fill:#e1f5fe
+    style I fill:#e8f5e9
+    style F fill:#fff3e0
+    style G fill:#f3e5f5
+```
+
+### 📖 详细架构文档
+
+- **[完整系统架构图](docs/SYSTEM-STRUCTURE.md)** - 包含详细的组件关系、代码位置和性能优化说明
+- **核心模块说明** - PDF处理器、文本处理器、QA提取器、LLM客户端、语义分组器
+- **性能优化特性** - 并发处理、连接池、Keep-Alive机制、Token监控
+- **配置参数详解** - 语义分组、长答案处理、批处理等高级配置
+
+### 🔧 核心组件
+
+- **`QAExtractionProcessor`** - 主协调器，管理整个处理流程
+- **`PDFProcessor`** - PDF文本提取和元数据获取
+- **`TextProcessor`** - 文本预处理和分块
+- **`SemanticGrouper`** - 三层智能语义分组策略
+- **`QAExtractor`** - LLM驱动的问答对提取
+- **`LLMClient`** - Ollama API 客户端，支持并发和优化
 
 ## 🚀 快速开始
 

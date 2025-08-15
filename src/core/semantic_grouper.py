@@ -8,6 +8,7 @@
 import re
 import logging
 import numpy as np
+import yaml
 from typing import List, Dict, Any, Optional, Tuple
 from sentence_transformers import SentenceTransformer, util
 from sklearn.metrics.pairwise import cosine_similarity
@@ -49,6 +50,9 @@ class SemanticGrouper:
         self.filtering_level = config.get('filtering_level', 'balanced')  # strict, balanced, none
         self.semantic_threshold = config.get('semantic_threshold', 0.5)
         
+        # 🔥 加载目标人物配置
+        self.target_person = self._load_target_person_config(config)
+        
         # 初始化jieba分词器
         self._init_jieba()
         
@@ -69,57 +73,9 @@ class SemanticGrouper:
             self.logger.error(f"You may need to run: pip install -U sentence-transformers")
             raise e
         
-        # 🔥 大幅扩展问答模式识别范围
-        # 问题模式 - 支持更多格式变体
-        self.question_patterns = [
-            # 基础模式
-            r"网友[：:]",
-            r"记者[：:]",
-            r"问[：:]",
-            r"问题[：:]",
-            r"提问[：:]",
-            r"主持人[：:]",
-            r"观众[：:]",
-            r"Q[：:]",
-            # 🚀 新增：编号前缀模式
-            r"\d+\.\s*网友[：:]",
-            r"\d+\.\s*记者[：:]", 
-            r"\d+\.\s*问[：:]",
-            r"\d+\.\s*主持人[：:]",
-            r"\d+\.\s*观众[：:]",
-            # 🚀 新增：带标识符模式
-            r"网友[A-Za-z0-9]*[：:]",
-            r"记者[A-Za-z0-9]*[：:]",
-            r"观众[A-Za-z0-9]*[：:]",
-            # 🚀 新增：间接引用模式
-            r"有人问[：:]",
-            r"有朋友问[：:]",
-            r"有网友问[：:]",
-            r"文章引用[：:]",
-            r"引用[：:]",
-            r"有人说[：:]",
-            r"有观点认为[：:]",
-            # 🚀 新增：自然语言问句模式
-            r".*[？?]$",  # 以问号结尾
-        ]
-        
-        # 答案模式 - 支持更多回答者变体
-        self.answer_patterns = [
-            # 基础模式
-            r"段永平[：:]",
-            r"段[：:]",
-            r"A[：:]",
-            r"答[：:]",
-            r"回答[：:]",
-            # 🚀 新增：带编号的答案模式
-            r"\d+\.\s*段永平[：:]",
-            r"\d+\.\s*段[：:]",
-            # 🚀 新增：其他可能的回答者标识
-            r"大道[：:]",
-            r"老段[：:]",
-            # 🚀 新增：更灵活的段永平标识
-            r"段\s*永\s*平[：:]",
-        ]
+        # 🔥 动态生成问答模式识别范围
+        self.question_patterns = self._generate_question_patterns()
+        self.answer_patterns = self._generate_answer_patterns()
         
         # 所有QA模式（用于兼容性）
         self.high_confidence_qa_patterns = self.question_patterns + self.answer_patterns
@@ -136,17 +92,171 @@ class SemanticGrouper:
             r".*求解.*",
         ]
         
-        self.logger.info("Semantic Grouper initialized successfully with enhanced pattern recognition")
+        # 🔥 添加动态模式生成的日志信息
+        target_name = self.target_person.get('main_name', 'Unknown') if self.target_person else 'Default'
+        questioner_count = len(self.target_person.get('questioner_types', [])) if self.target_person else 0
+        self.logger.info(f"Semantic Grouper initialized successfully:")
+        self.logger.info(f"  - Target person: {target_name}")
+        self.logger.info(f"  - Question patterns: {len(self.question_patterns)} generated")
+        self.logger.info(f"  - Answer patterns: {len(self.answer_patterns)} generated")
+        self.logger.info(f"  - Questioner types: {questioner_count} configured")
+    
+    def _load_target_person_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        🔥 加载目标人物配置
+        支持多种加载方式：
+        1. 直接传入target_person字典（向后兼容）
+        2. 通过target_person_config路径加载YAML文件
+        """
+        # 如果配置中已经有target_person字典，直接使用（向后兼容）
+        if 'target_person' in config and config['target_person']:
+            self.logger.info("Using target_person config from dictionary")
+            return config['target_person']
+        
+        # 如果有target_person_config路径，从YAML文件加载
+        person_config_path = config.get('target_person_config')
+        if person_config_path:
+            try:
+                self.logger.info(f"Loading target person config from: {person_config_path}")
+                with open(person_config_path, 'r', encoding='utf-8') as f:
+                    person_config = yaml.safe_load(f)
+                
+                # 提取target_person部分
+                if 'target_person' in person_config:
+                    target_person = person_config['target_person'].copy()
+                    # 同时添加questioner_types信息（如果存在）
+                    if 'questioner_types' in person_config:
+                        target_person['questioner_types'] = person_config['questioner_types']
+                    return target_person
+                else:
+                    self.logger.warning(f"No 'target_person' found in {person_config_path}")
+                    return {}
+            except Exception as e:
+                self.logger.error(f"Failed to load target person config from {person_config_path}: {e}")
+                return {}
+        
+        # 如果都没有，返回空字典
+        self.logger.warning("No target person configuration found, using defaults")
+        return {}
     
     def _init_jieba(self):
         """初始化jieba分词器，添加自定义词典"""
         # 添加一些金融/投资相关的专有名词
         custom_words = [
             "价值投资", "stop doing list", "能力圈", "护城河", 
-            "复利", "市盈率", "现金流", "ROE", "段永平"
+            "复利", "市盈率", "现金流", "ROE"
         ]
+        
+        # 🔥 从配置中添加目标人物相关词汇
+        if self.target_person:
+            main_name = self.target_person.get('main_name', '')
+            aliases = self.target_person.get('aliases', [])
+            
+            if main_name:
+                custom_words.append(main_name)
+            
+            custom_words.extend(aliases)
+        
         for word in custom_words:
             jieba.add_word(word)
+    
+    def _generate_question_patterns(self) -> List[str]:
+        """
+        🔥 根据配置动态生成问题模式
+        """
+        # 基础问题标识符
+        base_question_identifiers = [
+            "问", "问题", "提问", "Q"
+        ]
+        
+        # 从配置中获取提问者类型
+        questioner_types = []
+        if self.target_person:
+            questioner_types = self.target_person.get('questioner_types', [])
+        
+        # 如果配置中没有定义，使用默认的
+        if not questioner_types:
+            questioner_types = ["网友", "记者", "投资者", "主持人", "观众"]
+        
+        patterns = []
+        
+        # 为每种提问者类型生成模式
+        for questioner in questioner_types:
+            # 基础模式
+            patterns.append(rf"{questioner}[：:]")
+            # 编号前缀模式
+            patterns.append(rf"\d+\.\s*{questioner}[：:]")
+            # 带标识符模式
+            patterns.append(rf"{questioner}[A-Za-z0-9]*[：:]")
+        
+        # 添加基础问题标识符
+        for identifier in base_question_identifiers:
+            patterns.append(rf"{identifier}[：:]")
+            patterns.append(rf"\d+\.\s*{identifier}[：:]")
+        
+        # 添加间接引用模式
+        indirect_patterns = [
+            r"有人问[：:]",
+            r"有朋友问[：:]",
+            r"有网友问[：:]",
+            r"文章引用[：:]",
+            r"引用[：:]",
+            r"有人说[：:]",
+            r"有观点认为[：:]"
+        ]
+        patterns.extend(indirect_patterns)
+        
+        # 添加自然语言问句模式
+        patterns.append(r".*[？?]$")  # 以问号结尾
+        
+        return patterns
+    
+    def _generate_answer_patterns(self) -> List[str]:
+        """
+        🔥 根据配置动态生成答案模式
+        """
+        patterns = []
+        
+        # 基础答案标识符
+        base_answer_identifiers = ["A", "答", "回答"]
+        
+        # 从配置中获取目标人物信息
+        if self.target_person:
+            main_name = self.target_person.get('main_name', '')
+            aliases = self.target_person.get('aliases', [])
+            
+            # 为主要名字生成模式
+            if main_name:
+                patterns.append(rf"{main_name}[：:]")
+                patterns.append(rf"\d+\.\s*{main_name}[：:]")
+                # 支持名字中间有空格的情况
+                spaced_name = r"\s*".join(main_name)
+                patterns.append(rf"{spaced_name}[：:]")
+            
+            # 为别名生成模式
+            for alias in aliases:
+                patterns.append(rf"{alias}[：:]")
+                patterns.append(rf"\d+\.\s*{alias}[：:]")
+        
+        # 添加基础答案标识符
+        for identifier in base_answer_identifiers:
+            patterns.append(rf"{identifier}[：:]")
+            patterns.append(rf"\d+\.\s*{identifier}[：:]")
+        
+        # 如果没有配置目标人物，使用默认的段永平模式（向后兼容）
+        if not patterns or not self.target_person:
+            fallback_patterns = [
+                r"段永平[：:]",
+                r"段[：:]",
+                r"大道[：:]",
+                r"老段[：:]",
+                r"\d+\.\s*段永平[：:]",
+                r"\d+\.\s*段[：:]",
+                r"段\s*永\s*平[：:]"
+            ]
+            patterns.extend(fallback_patterns)
+        
+        return patterns
     
     def _detect_domain(self, text_chunk: str) -> str:
         """检测文本所属领域，用于选择合适的嵌入模型"""
@@ -607,6 +717,251 @@ class SemanticGrouper:
         
         self.logger.info(f"Semantic grouping: {len(semantic_blocks)} semantic blocks created")
         return semantic_blocks
+
+    def _improved_semantic_grouping(self, paragraphs: List[str], indices: List[int]) -> List[Dict]:
+        """
+        改进的语义分组方法：解决段落丢失问题
+        核心改进：
+        1. 使用全局相似度矩阵，避免窗口边界问题
+        2. 采用层次聚类思想，确保相关段落被分到同一组
+        3. 动态调整分组策略，优先保证内容完整性
+        """
+        if not indices:
+            return []
+        
+        semantic_blocks = []
+        model = self.models["general"]  # 使用通用模型
+        
+        # 计算所有段落之间的相似度矩阵
+        paragraph_texts = [paragraphs[idx] for idx in indices]
+        embeddings = model.encode(paragraph_texts, convert_to_tensor=True)
+        similarity_matrix = util.cos_sim(embeddings, embeddings).cpu().numpy()
+        
+        # 计算动态阈值
+        if len(paragraph_texts) >= 3:
+            threshold = self._calculate_dynamic_threshold(paragraph_texts, model)
+        else:
+            threshold = self.default_similarity_threshold
+        
+        # 使用改进的分组策略
+        i = 0
+        while i < len(indices):
+            current_group = [paragraph_texts[0]]  # 从当前段落开始
+            current_indices = [indices[0]]
+            current_embeddings = [embeddings[0]]
+            
+            # 向前扩展：寻找与当前组高度相似的段落
+            j = i + 1
+            while j < len(indices):
+                # 计算当前段落与组内所有段落的平均相似度
+                current_embedding = embeddings[j]
+                similarities = []
+                
+                for group_embedding in current_embeddings:
+                    sim = util.cos_sim(current_embedding.unsqueeze(0), group_embedding.unsqueeze(0)).item()
+                    similarities.append(sim)
+                
+                avg_similarity = np.mean(similarities)
+                
+                # 如果平均相似度超过阈值，加入当前组
+                if avg_similarity > threshold:
+                    current_group.append(paragraph_texts[j])
+                    current_indices.append(indices[j])
+                    current_embeddings.append(current_embedding)
+                    j += 1
+                else:
+                    # 检查是否为潜在问题-答案对
+                    if self._is_potential_question(paragraph_texts[j]):
+                        # 尝试找到对应的答案段落
+                        answer_found = False
+                        for k in range(j + 1, min(j + 4, len(indices))):  # 在后续3个段落中寻找答案
+                            answer_sim = util.cos_sim(current_embedding.unsqueeze(0), embeddings[k].unsqueeze(0)).item()
+                            if answer_sim > threshold * 0.8:  # 稍微降低阈值
+                                # 将问题和答案都加入当前组
+                                current_group.extend(paragraph_texts[j:k+1])
+                                current_indices.extend(indices[j:k+1])
+                                current_embeddings.extend([embeddings[j], embeddings[k]])
+                                j = k + 1
+                                answer_found = True
+                                break
+                        
+                        if not answer_found:
+                            break
+                    else:
+                        break
+            
+            # 创建语义块
+            if len("\n\n".join(current_group)) >= self.min_block_size:
+                semantic_blocks.append({
+                    'content': "\n\n".join(current_group),
+                    'confidence': 'medium',
+                    'type': 'improved_semantic',
+                    'domain': self._detect_domain("\n\n".join(current_group)),
+                    'indices': current_indices
+                })
+            
+            i = j  # 移动到下一个未处理的段落
+        
+        self.logger.info(f"Improved semantic grouping: {len(semantic_blocks)} semantic blocks created")
+        return semantic_blocks
+
+    def _hierarchical_semantic_grouping(self, paragraphs: List[str], indices: List[int]) -> List[Dict]:
+        """
+        层次聚类语义分组：更智能的分组策略
+        1. 首先识别主题边界（问题段落）
+        2. 然后基于语义相似度将相关段落聚类
+        3. 确保每个主题的完整性
+        """
+        if not indices:
+            return []
+        
+        semantic_blocks = []
+        model = self.models["general"]
+        
+        # 获取所有段落文本
+        paragraph_texts = [paragraphs[idx] for idx in indices]
+        
+        # 计算全局相似度矩阵
+        embeddings = model.encode(paragraph_texts, convert_to_tensor=True)
+        similarity_matrix = util.cos_sim(embeddings, embeddings).cpu().numpy()
+        
+        # 识别问题段落（主题边界）
+        question_indices = []
+        for i, text in enumerate(paragraph_texts):
+            if self._is_potential_question(text):
+                question_indices.append(i)
+        
+        # 如果没有问题段落，尝试基于相似度进行分组
+        if not question_indices:
+            return self._similarity_based_grouping(paragraphs, indices, similarity_matrix)
+        
+        # 基于问题段落进行主题分组
+        for i, q_idx in enumerate(question_indices):
+            # 确定当前主题的结束位置
+            if i + 1 < len(question_indices):
+                end_idx = question_indices[i + 1]
+            else:
+                end_idx = len(indices)
+            
+            # 获取当前主题范围内的段落
+            topic_start = q_idx
+            topic_end = end_idx
+            
+            # 使用相似度矩阵进行主题内分组
+            current_group = [paragraph_texts[q_idx]]  # 从问题开始
+            current_indices = [indices[q_idx]]
+            
+            # 计算动态阈值
+            topic_paragraphs = paragraph_texts[topic_start:topic_end]
+            threshold = self._calculate_dynamic_threshold(topic_paragraphs, model)
+            
+            # 向前扩展：添加与问题段落相似的段落
+            for j in range(q_idx + 1, topic_end):
+                # 计算与问题段落的相似度
+                question_similarity = similarity_matrix[q_idx, j]
+                
+                # 计算与组内所有段落的平均相似度
+                group_similarities = [similarity_matrix[j, k] for k in range(len(current_group))]
+                avg_group_similarity = np.mean(group_similarities)
+                
+                # 计算与前一段落的相似度（连续性检查）
+                prev_similarity = similarity_matrix[j, j-1] if j > 0 else 0
+                
+                # 更宽松的加入条件：
+                # 1. 与问题段落相似度高
+                # 2. 与组内段落平均相似度高
+                # 3. 与前一段落相似度高（连续性）
+                # 4. 或者是下一个问题段落之前的最后一个段落
+                should_add = (
+                    question_similarity > threshold * 0.7 or  # 降低阈值
+                    avg_group_similarity > threshold * 0.8 or  # 降低阈值
+                    prev_similarity > threshold * 0.5 or  # 连续性检查
+                    j == topic_end - 1  # 主题范围内的最后一个段落
+                )
+                
+                if should_add:
+                    current_group.append(paragraph_texts[j])
+                    current_indices.append(indices[j])
+                else:
+                    # 如果相似度都不够，但这是主题范围内的段落，也要加入
+                    # 避免在主题中间断开
+                    if j < topic_end - 1:  # 不是主题的最后一个段落
+                        current_group.append(paragraph_texts[j])
+                        current_indices.append(indices[j])
+                    else:
+                        break
+            
+            # 创建语义块（降低最小块大小要求，确保所有主题都被处理）
+            min_size = max(self.min_block_size // 2, 20)  # 降低最小块大小要求
+            if len("\n\n".join(current_group)) >= min_size:
+                semantic_blocks.append({
+                    'content': "\n\n".join(current_group),
+                    'confidence': 'high',
+                    'type': 'enhanced_hierarchical',
+                    'domain': self._detect_domain("\n\n".join(current_group)),
+                    'indices': current_indices
+                })
+            else:
+                # 如果块太小，但仍然包含问题段落，也要保留
+                if any(self._is_potential_question(text) for text in current_group):
+                    semantic_blocks.append({
+                        'content': "\n\n".join(current_group),
+                        'confidence': 'medium',
+                        'type': 'small_question_block',
+                        'domain': self._detect_domain("\n\n".join(current_group)),
+                        'indices': current_indices
+                    })
+        
+        self.logger.info(f"Enhanced hierarchical grouping: {len(semantic_blocks)} semantic blocks created")
+        return semantic_blocks
+    
+    def _similarity_based_grouping(self, paragraphs: List[str], indices: List[int], similarity_matrix: np.ndarray) -> List[Dict]:
+        """
+        基于相似度矩阵的分组：当没有明确问题段落时使用
+        """
+        if not indices:
+            return []
+        
+        semantic_blocks = []
+        paragraph_texts = [paragraphs[idx] for idx in indices]
+        
+        # 计算动态阈值
+        model = self.models["general"]
+        threshold = self._calculate_dynamic_threshold(paragraph_texts, model)
+        
+        # 使用层次聚类思想
+        i = 0
+        while i < len(indices):
+            current_group = [paragraph_texts[i]]
+            current_indices = [indices[i]]
+            
+            # 向前扩展：寻找相似段落
+            j = i + 1
+            while j < len(indices):
+                # 计算与组内所有段落的平均相似度
+                group_similarities = [similarity_matrix[j, k] for k in range(i, j)]
+                avg_similarity = np.mean(group_similarities) if group_similarities else 0
+                
+                if avg_similarity > threshold:
+                    current_group.append(paragraph_texts[j])
+                    current_indices.append(indices[j])
+                    j += 1
+                else:
+                    break
+            
+            # 创建语义块
+            if len("\n\n".join(current_group)) >= self.min_block_size:
+                semantic_blocks.append({
+                    'content': "\n\n".join(current_group),
+                    'confidence': 'medium',
+                    'type': 'similarity_based',
+                    'domain': self._detect_domain("\n\n".join(current_group)),
+                    'indices': current_indices
+                })
+            
+            i = j
+        
+        return semantic_blocks
     
     def _merge_and_optimize_blocks(self, all_blocks: List[Dict]) -> List[Dict]:
         """合并和优化所有块，确保大小合适"""
@@ -724,10 +1079,17 @@ class SemanticGrouper:
         # 第一层：规则预筛选
         high_confidence_blocks, remaining_indices = self._rule_based_prescreening(paragraphs)
         
-        # 第二层：语义动态分组（处理剩余段落）
+        # 第二层：改进的语义分组（处理剩余段落）
         semantic_blocks = []
         if remaining_indices:
-            semantic_blocks = self._semantic_dynamic_grouping(paragraphs, remaining_indices)
+            # 优先使用层次聚类分组，如果失败则回退到改进分组
+            try:
+                semantic_blocks = self._hierarchical_semantic_grouping(paragraphs, remaining_indices)
+                if not semantic_blocks:  # 如果层次分组没有结果，使用改进分组
+                    semantic_blocks = self._improved_semantic_grouping(paragraphs, remaining_indices)
+            except Exception as e:
+                self.logger.warning(f"Hierarchical grouping failed, falling back to improved grouping: {e}")
+                semantic_blocks = self._improved_semantic_grouping(paragraphs, remaining_indices)
         
         # 合并所有块
         all_blocks = high_confidence_blocks + semantic_blocks
