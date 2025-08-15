@@ -1,5 +1,107 @@
 ## Core Processing Pipeline 架构分析
 
+### 系统架构图
+
+```mermaid
+graph TB
+    %% 入口点与配置
+    Start([用户执行命令]) --> CLI["extract_qa.py<br/>入口点<br/>Lines: 355-420"]
+    CLI --> ConfigLoad["配置加载<br/>settings.py + config.yaml<br/>目标人员配置"]
+    
+    %% 主处理器
+    ConfigLoad --> MainProc["QAExtractionProcessor<br/>主协调器<br/>processor.py: 18-70"]
+    
+    %% 组件初始化
+    MainProc --> Components{初始化组件}
+    Components --> PDF["PDFProcessor<br/>pdf_processor.py"]
+    Components --> Text["TextProcessor<br/>text_processor.py"]
+    Components --> QA["QAExtractor<br/>qa_extractor.py"]
+    Components --> LLM["LLMClient<br/>llm_client.py"]
+    Components --> Semantic["SemanticGrouper<br/>semantic_grouper.py"]
+    
+    %% 处理流水线
+    MainProc --> ProcessStart["process_pdf()<br/>processor.py: 72-261"]
+    
+    %% 阶段1: PDF处理
+    ProcessStart --> PDFExtract["从PDF提取文本<br/>PyMuPDF/fitz<br/>pdf_processor.py: 16-55"]
+    PDFExtract --> RawText[原始文本内容]
+    
+    %% 阶段2: 文本预处理
+    RawText --> Preprocess["预处理文本<br/>标准化问答格式<br/>text_processor.py: 20-42"]
+    Preprocess --> Paragraphs[分割为段落]
+    
+    %% 阶段3: 问答优先策略
+    Paragraphs --> QAFirst["基于规则的问答检测<br/>processor.py: 123-127"]
+    QAFirst --> CompleteQA[完整问答块]
+    QAFirst --> Remaining[剩余段落]
+    
+    %% 阶段4: 语义分组
+    Remaining --> SemanticProc["语义分组<br/>三层策略"]
+    SemanticProc --> Layer1["层1: 规则预筛<br/>semantic_grouper.py: 270-432"]
+    SemanticProc --> Layer2["层2: 动态分组<br/>semantic_grouper.py: 434-773"]
+    SemanticProc --> Layer3["层3: 块优化<br/>semantic_grouper.py: 775-926"]
+    
+    Layer1 --> HighConf[高置信度块]
+    Layer2 --> SemBlocks[语义块]
+    Layer3 --> OptBlocks[优化块]
+    
+    %% 合并所有块
+    CompleteQA --> AllBlocks[所有文本块]
+    HighConf --> AllBlocks
+    SemBlocks --> AllBlocks
+    OptBlocks --> AllBlocks
+    
+    %% 阶段5: 并行处理
+    AllBlocks --> Parallel["并行处理<br/>ThreadPoolExecutor<br/>processor.py: 284-321"]
+    Parallel --> Batch["批处理<br/>批大小: 4<br/>最大工作线程: 3"]
+    
+    %% 阶段6: LLM提取
+    Batch --> SingleBlock["处理单个块<br/>processor.py: 437-534"]
+    SingleBlock --> ExtractQA["LLM提取<br/>qa_extractor.py: 192-263"]
+    
+    ExtractQA --> Prompt["生成提示<br/>prompt_generator.py<br/>Jinja2模板"]
+    Prompt --> CallLLM["调用Ollama API<br/>llm_client.py: 146-195"]
+    CallLLM --> ParseJSON["解析JSON响应<br/>qa_extractor.py: 158-190"]
+    
+    %% 阶段7: 后处理
+    ParseJSON --> PostProc{后处理}
+    PostProc --> LongAns["长答案处理<br/>链式摘要 + NLI<br/>qa_extractor.py: 567-701"]
+    PostProc --> Filter["质量过滤<br/>qa_extractor.py: 875-882"]
+    PostProc --> Anchor["生成关键词<br/>qa_extractor.py: 263-301"]
+    
+    %% 阶段8: 输出
+    LongAns --> Save["保存至JSONL<br/>file_utils.py: 51-66"]
+    Filter --> Save
+    Anchor --> Save
+    
+    Save --> Output["输出文件<br/>output/*.jsonl"]
+    Save --> Logs["日志记录<br/>main.log<br/>error.log<br/>success.log"]
+    
+    %% 性能特性
+    Parallel -.-> Perf1["连接保持: 30m<br/>llm_client.py: 176"]
+    Parallel -.-> Perf2["连接池<br/>llm_client.py: 37-48"]
+    Parallel -.-> Perf3["模型预热<br/>llm_client.py: 103-144"]
+    
+    %% 监控
+    SingleBlock -.-> Monitor1["令牌监控<br/>monitor_token_usage.py"]
+    SingleBlock -.-> Monitor2["性能统计<br/>llm_client.py: 21-29"]
+    
+    %% 样式定义
+    classDef entry fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
+    classDef core fill:#fff8e1,stroke:#f57c00,stroke-width:2px
+    classDef process fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef llm fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef output fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef perf fill:#f5f5f5,stroke:#616161,stroke-width:1px,stroke-dasharray: 5 5
+    
+    class Start,CLI entry
+    class MainProc,Components,PDF,Text,QA,LLM,Semantic core
+    class ProcessStart,PDFExtract,Preprocess,QAFirst,SemanticProc,Layer1,Layer2,Layer3,Parallel,Batch,SingleBlock process
+    class ExtractQA,Prompt,CallLLM,ParseJSON llm
+    class Save,Output,Logs output
+    class Perf1,Perf2,Perf3,Monitor1,Monitor2 perf
+```
+
 ### 主要组件和处理流程：
 
 
